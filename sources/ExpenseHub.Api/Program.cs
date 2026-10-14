@@ -1,5 +1,8 @@
+using ExpenseHub.Api.Data;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -11,6 +14,8 @@ internal static class Program
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
         builder.Services.AddOpenApi();
+        builder.Services.AddDbContext<ExpenseHubDbContext>(options =>
+            options.UseSqlite(builder.Configuration.GetConnectionString(ExpenseHubDbContext.ConnectionStringName)));
 
         WebApplication app = builder.Build();
 
