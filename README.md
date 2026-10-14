@@ -64,16 +64,52 @@ O endpoint inicial `GET /health` existe apenas para confirmar que a aplicação 
 
 ## Banco de dados
 
-Você pode utilizar Microsoft SQL Server LocalDB, Oracle Database, SQLite ou outro provider relacional compatível com Entity Framework Core.
+A aplicação usa **SQLite** como provider relacional do Entity Framework Core. A escolha
+prioriza simplicidade de execução: os dados ficam em um arquivo local e o build/teste
+**não depende de nenhum servidor de banco rodando**.
 
-A escolha não gera pontos. Documente no README do seu repositório:
+### Provider e pacotes
 
-- provider e pacote utilizado;
-- configuração necessária;
-- criação ou atualização do banco;
-- como iniciar a aplicação.
+| Pacote | Versão | Finalidade |
+|---|---|---|
+| `Microsoft.EntityFrameworkCore.Sqlite` | 10.0.12 | Provider relacional SQLite |
+| `Microsoft.EntityFrameworkCore.Design` | 10.0.12 | Suporte a `dotnet ef` (migrations) |
 
-Não versione senhas, tokens ou connection strings sensíveis.
+A versão da ferramenta `dotnet-ef` está fixada no manifest local `dotnet-tools.json`.
+
+### Configuração
+
+A connection string fica em `sources/ExpenseHub.Api/appsettings.json`:
+
+```json
+"ConnectionStrings": {
+  "ExpenseHub": "Data Source=expensehub.db"
+}
+```
+
+O arquivo `expensehub.db` é criado no diretório de execução da API e está ignorado
+pelo Git (banco local nunca é versionado). A string não contém segredos. O contexto
+é `ExpenseHub.Data.ExpenseHubDbContext`, registrado em `Program.cs` com `UseSqlite`.
+
+### Criar ou atualizar o banco
+
+```shell
+dotnet tool restore
+dotnet ef migrations add NomeDaMigration --project sources/ExpenseHub.Api --startup-project sources/ExpenseHub.Api
+dotnet ef database update --project sources/ExpenseHub.Api --startup-project sources/ExpenseHub.Api
+```
+
+A migration inicial `InitialCreate` já está versionada em
+`sources/ExpenseHub.Api/Migrations/`; basta executar `dotnet ef database update`.
+
+### Como iniciar a aplicação
+
+```shell
+dotnet run --project sources/ExpenseHub.Api/ExpenseHub.Api.csproj
+```
+
+Em ambiente de desenvolvimento, o OpenAPI fica em `/openapi/v1.json`. O endpoint
+`GET /health` confirma que a aplicação subiu.
 
 ## Testes
 
