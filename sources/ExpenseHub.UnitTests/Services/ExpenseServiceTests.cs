@@ -18,7 +18,7 @@ namespace ExpenseHub.UnitTests.Services;
 [TestClass]
 public sealed class ExpenseServiceTests
 {
-    private static readonly DateTimeOffset FixedNowUtc = new(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset _fixedNowUtc = new(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);
 
     /// <summary>Verifica que a criação válida grava rascunho próprio em Draft com histórico de criação.</summary>
     [TestMethod]
@@ -45,7 +45,7 @@ public sealed class ExpenseServiceTests
         Assert.IsNotNull(outcome.Expense);
         Assert.AreEqual("employee-a", outcome.Expense.OwnerId);
         Assert.AreEqual("Draft", outcome.Expense.State);
-        Assert.AreEqual(FixedNowUtc.UtcDateTime, outcome.Expense.CreatedAtUtc);
+        Assert.AreEqual(_fixedNowUtc.UtcDateTime, outcome.Expense.CreatedAtUtc);
         Assert.AreEqual(category.Id, outcome.Expense.ExpenseCategoryId);
 
         Expense persisted = await dbContext.Expenses.SingleAsync();
@@ -211,7 +211,7 @@ public sealed class ExpenseServiceTests
         Assert.AreEqual("Jantar com cliente no aeroporto", outcome.Expense.Description);
         Assert.AreEqual(150.00m, outcome.Expense.Amount);
         Assert.AreEqual(new DateOnly(2026, 10, 12), outcome.Expense.ExpenseDate);
-        Assert.AreEqual(FixedNowUtc.UtcDateTime, outcome.Expense.UpdatedAtUtc);
+        Assert.AreEqual(_fixedNowUtc.UtcDateTime, outcome.Expense.UpdatedAtUtc);
 
         ExpenseHistory history = await dbContext.ExpenseHistories.SingleAsync();
         Assert.AreEqual("Editar", history.Action);
@@ -358,7 +358,7 @@ public sealed class ExpenseServiceTests
         Assert.AreEqual("employee-a", history.ActorId);
         Assert.AreEqual(ExpenseState.Draft, history.PreviousState);
         Assert.AreEqual(ExpenseState.Submitted, history.NewState);
-        Assert.AreEqual(FixedNowUtc.UtcDateTime, history.OccurredAtUtc);
+        Assert.AreEqual(_fixedNowUtc.UtcDateTime, history.OccurredAtUtc);
     }
 
     /// <summary>Verifica que o envio por quem não é o proprietário é negado sem alterar estado.</summary>
@@ -786,7 +786,7 @@ public sealed class ExpenseServiceTests
 
     private static ExpenseService CreateService(ExpenseHubDbContext dbContext)
     {
-        return new ExpenseService(dbContext, new ExpenseHistoryService(dbContext), new FixedTimeProvider(FixedNowUtc));
+        return new ExpenseService(dbContext, new ExpenseHistoryService(dbContext), new FixedTimeProvider(_fixedNowUtc));
     }
 
     private static CreateExpenseRequest ValidCreateRequest()
@@ -818,27 +818,27 @@ public sealed class ExpenseServiceTests
             Amount = 89.90m,
             ExpenseDate = new DateOnly(2026, 10, 10),
             State = ExpenseState.Draft,
-            CreatedAtUtc = FixedNowUtc.UtcDateTime,
+            CreatedAtUtc = _fixedNowUtc.UtcDateTime,
         };
     }
 
     /// <summary>Relógio fixo usado nos testes para tornar os instantes UTC determinísticos.</summary>
     private sealed class FixedTimeProvider : TimeProvider
     {
-        private readonly DateTimeOffset utcNow;
+        private readonly DateTimeOffset _utcNow;
 
         /// <summary>Inicializa o relógio com o instante fixo informado.</summary>
         /// <param name="utcNow">Instante UTC fixo retornado pelo relógio.</param>
         public FixedTimeProvider(DateTimeOffset utcNow)
         {
-            this.utcNow = utcNow;
+            _utcNow = utcNow;
         }
 
         /// <summary>Retorna o instante UTC fixo configurado.</summary>
         /// <returns>O instante UTC fixo.</returns>
         public override DateTimeOffset GetUtcNow()
         {
-            return this.utcNow;
+            return _utcNow;
         }
     }
 }
