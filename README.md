@@ -159,6 +159,58 @@ curl -s -X POST http://localhost:5245/login \
   -d '{"email":"admin@expensehub.local","password":"<senha>"}'
 ```
 
+### Cadastro
+
+`POST /register` é público e recebe `{ "email": "...", "password": "..." }`:
+
+```shell
+curl -s -X POST http://localhost:5245/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"funcionario@expensehub.local","password":"<senha-forte>"}'
+```
+
+Regras do cadastro (issue I03):
+
+- o DTO **não possui campo de role**: o cadastro nunca promove ninguém. O usuário
+  recém-criado nasce **sem roles** e quem atribui roles é o Admin (endpoint abaixo);
+- entrada inválida (DTO inválido, senha fora da política ou **e-mail já cadastrado**)
+  → `400` com `ProblemDetails`. A duplicidade de e-mail retorna `400` (e não `409`)
+  porque o contrato reserva `409` para transições de estado de reembolso;
+- sucesso → `201` com `{ "id": "...", "email": "..." }`; o identificador é gerado
+  pelo servidor.
+
+### Administração de usuários e roles (somente Admin)
+
+`GET /api/admin/users` lista os usuários e suas roles. Requer a role `Admin`:
+anônimo → `401`; autenticado sem `Admin` → `403`.
+
+`PUT /api/admin/users/{id}/roles` substitui o conjunto completo de roles do usuário:
+
+```shell
+curl -s -X PUT http://localhost:5245/api/admin/users/<id>/roles \
+  -H "Authorization: Bearer <token-admin>" \
+  -H "Content-Type: application/json" \
+  -d '{"roles":["Employee","Approver"]}'
+```
+
+- **whitelist**: apenas as 5 roles conhecidas são aceitas (`Admin`, `Employee`,
+  `Approver`, `Finance`, `Auditor`); role arbitrária → `400`. A comparação ignora
+  maiúsculas/minúsculas e duplicatas são ignoradas;
+- usuário inexistente → `404`;
+- o Admin **não pode remover a própria role `Admin`** → `403`. Decisão documentada:
+  a entrada é válida (todas as roles existem), mas o ator autenticado não tem
+  permissão para a operação sobre a própria conta — caso previsto pelo contrato
+  `403 = autenticado sem permissão`;
+- lista vazia é aceita para outros usuários e remove todas as roles do alvo;
+  para o próprio Admin ela também é bloqueada com `403`.
+
+### Reautenticação após alteração de roles
+
+O token de acesso carrega as roles como claims `role` emitidas no momento do
+`POST /login`. Após qualquer alteração de roles, é necessário **autenticar
+novamente** para obter um token com as claims atualizadas: o token antigo continua
+válido até expirar, porém reflete as roles anteriores.
+
 ### Rotas protegidas
 
 As rotas são protegidas por padrão (política de fallback exige autenticação); apenas
@@ -166,9 +218,6 @@ As rotas são protegidas por padrão (política de fallback exige autenticação
 
 - anônimo em rota protegida → `401` com `ProblemDetails` (`application/problem+json`);
 - autenticado sem a role exigida → `403` com `ProblemDetails` (`application/problem+json`).
-
-Após uma alteração de roles, é necessário autenticar novamente para obter um token
-com as novas claims.
 
 ## Testes
 
