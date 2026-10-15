@@ -45,6 +45,8 @@ internal static class Program
 
         builder.Services.AddScoped<IUserRegistrationService, UserRegistrationService>();
         builder.Services.AddScoped<IUserAdminService, UserAdminService>();
+        builder.Services.AddScoped<IExpenseService, ExpenseService>();
+        builder.Services.AddSingleton(TimeProvider.System);
 
         builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
