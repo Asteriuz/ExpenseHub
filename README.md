@@ -342,6 +342,60 @@ da consulta de detalhe, aplicada como filtro no `IQueryable`:
 - recurso inexistente ou fora do escopo de leitura → `404`, sem revelar
   existência; anônimo → `401`.
 
+## Matriz de autorização — status HTTP (evidência)
+
+Tabela preenchida com o status HTTP que cada combinação de ator × operação retorna
+nesta implementação (caminho feliz; as exceções por operação estão listadas após a
+tabela). Requisições anônimas em rota protegida retornam `401` e usuários autenticados
+sem a role exigida retornam `403`, sempre com `ProblemDetails` (`application/problem+json`).
+
+| Operação | Rota | Anônimo | Employee | Approver | Finance | Auditor | Admin |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Registrar usuário | `POST /register` | 201 | 201 | 201 | 201 | 201 | 201 |
+| Login | `POST /login` | 200 | 200 | 200 | 200 | 200 | 200 |
+| Health check | `GET /health` | 200 | 200 | 200 | 200 | 200 | 200 |
+| Listar usuários | `GET /api/admin/users` | 401 | 403 | 403 | 403 | 403 | 200 |
+| Alterar roles | `PUT /api/admin/users/{id}/roles` | 401 | 403 | 403 | 403 | 403 | 200 |
+| Criar rascunho | `POST /api/expenses` | 401 | 201 | 403 | 403 | 403 | 403 |
+| Editar rascunho | `PUT /api/expenses/{id}` | 401 | 200 | 403 | 403 | 403 | 403 |
+| Enviar rascunho | `POST /api/expenses/{id}/submit` | 401 | 200 | 403 | 403 | 403 | 403 |
+| Listar reembolsos | `GET /api/expenses` | 401 | 200 | 200 | 200 | 200 | 403 |
+| Consultar detalhe | `GET /api/expenses/{id}` | 401 | 200 | 200 | 200 | 200 | 403 |
+| Aprovar | `POST /api/expenses/{id}/approve` | 401 | 403 | 200 | 403 | 403 | 403 |
+| Reprovar | `POST /api/expenses/{id}/reject` | 401 | 403 | 200 | 403 | 403 | 403 |
+| Pagar | `POST /api/expenses/{id}/pay` | 401 | 403 | 403 | 200 | 403 | 403 |
+| Consultar histórico | `GET /api/expenses/{id}/history` | 401 | 200 | 200 | 200 | 200 | 403 |
+
+Observações por operação:
+
+- **Registrar usuário** — `400` quando o DTO é inválido, a senha fere a política ou o
+  e-mail já está cadastrado. O DTO nunca contém campo de role.
+- **Login** — `401` quando as credenciais são inválidas.
+- **Alterar roles** — `400` quando alguma role está fora da whitelist das 5 roles
+  conhecidas; `404` quando o usuário alvo não existe; `403` quando o Admin tenta
+  remover a própria role `Admin`.
+- **Criar/editar rascunho** — `400` entrada inválida (descrição, valor ou data) ou
+  categoria inexistente. Na edição: `403` reembolso de outro Employee, `409` estado
+  diferente de `Draft`, `404` reembolso inexistente.
+- **Enviar rascunho** — `403` reembolso de outro Employee; `409` estado diferente de
+  `Draft` ou envio repetido; `404` reembolso inexistente.
+- **Listar / consultar detalhe / consultar histórico** — o resultado `200` respeita o
+  escopo de leitura por perfil: `Employee` → próprios; `Approver` → `Submitted`;
+  `Finance` → `Approved`/`Paid`; `Auditor` → todos. Fora desse escopo (ou reembolso
+  inexistente) a leitura retorna `404`, sem revelar existência de recurso alheio.
+  Usuário com múltiplas roles recebe a união dos escopos.
+- **Aprovar/reprovar** — `403` quando o Approver é o proprietário do reembolso;
+  `409` quando o estado não é `Submitted` ou a decisão é repetida; `404` inexistente;
+  na reprovação, `400` quando a justificativa não tem de 10 a 500 caracteres.
+- **Pagar** — `403` quando o Finance é o proprietário; `409` quando o estado não é
+  `Approved` ou o pagamento é repetido; `404` inexistente.
+
+As rotas de escrita exigem a role no token (`[Authorize(Roles=...)]`). Um usuário com
+roles acumuladas recebe a união das permissões — por exemplo, `Approver`+`Employee`
+também pode criar, editar e enviar os próprios rascunhos — porém as proibições de
+autoaprovação, autopagamento e remoção da própria role `Admin` permanecem sempre.
+A role `Admin` não concede acesso funcional: apenas administração de usuários e roles.
+
 ## Testes
 
 Somente testes unitários escritos por você entram na nota. Testes de integração, end-to-end ou de interface são permitidos, mas opcionais e sem pontuação.
@@ -356,5 +410,9 @@ Entregue:
 - commit Secure Hash Algorithm (SHA) final;
 - integração contínua executada;
 - documentação atualizada.
+
+O checklist de confirmação da entrega (build e testes, score do pipeline de qualidade,
+PRs sem `Closes`/`Fixes`/`Resolves` e commits por integrante) e o rascunho da descrição
+da PR final estão em [docs/ENTREGA.md](docs/ENTREGA.md).
 
 O projeto deve compilar sem erros e ser entregue sem warnings para receber a pontuação integral de Qualidade de Código.
