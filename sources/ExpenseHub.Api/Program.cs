@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using ExpenseHub.Api.Authorization;
 using ExpenseHub.Api.Data;
 using ExpenseHub.Api.Identity;
+using ExpenseHub.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
@@ -41,6 +42,9 @@ internal static class Program
             .AddRoles<IdentityRole>()
             .AddEntityFrameworkStores<ExpenseHubDbContext>()
             .AddDefaultTokenProviders();
+
+        builder.Services.AddScoped<IUserRegistrationService, UserRegistrationService>();
+        builder.Services.AddScoped<IUserAdminService, UserAdminService>();
 
         builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
