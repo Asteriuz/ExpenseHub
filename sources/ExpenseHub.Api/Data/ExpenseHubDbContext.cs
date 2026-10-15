@@ -1,10 +1,15 @@
 using ExpenseHub.Api.Domain;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace ExpenseHub.Api.Data;
 
-/// <summary>Contexto do Entity Framework Core com o modelo de persistência do ExpenseHub.</summary>
-public class ExpenseHubDbContext : DbContext
+/// <summary>
+/// Contexto do Entity Framework Core com o modelo de persistência do ExpenseHub,
+/// incluindo as tabelas do ASP.NET Core Identity.
+/// </summary>
+public class ExpenseHubDbContext : IdentityDbContext<IdentityUser>
 {
     /// <summary>Nome da connection string do contexto declarada em appsettings.json.</summary>
     public const string ConnectionStringName = "ExpenseHub";
@@ -29,12 +34,12 @@ public class ExpenseHubDbContext : DbContext
     public DbSet<PaymentRecord> PaymentRecords => Set<PaymentRecord>();
 
     /// <summary>Configura os mapeamentos das entidades no modelo relacional.</summary>
-    /// <param name="modelBuilder">Construtor do modelo do Entity Framework Core.</param>
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    /// <param name="builder">Construtor do modelo do Entity Framework Core.</param>
+    protected override void OnModelCreating(ModelBuilder builder)
     {
-        base.OnModelCreating(modelBuilder);
+        base.OnModelCreating(builder);
 
-        modelBuilder.Entity<Expense>(entity =>
+        builder.Entity<Expense>(entity =>
         {
             entity.ToTable("Expenses");
 
@@ -66,7 +71,7 @@ public class ExpenseHubDbContext : DbContext
             entity.HasIndex(expense => new { expense.OwnerId, expense.State });
         });
 
-        modelBuilder.Entity<ExpenseCategory>(entity =>
+        builder.Entity<ExpenseCategory>(entity =>
         {
             entity.ToTable("ExpenseCategories");
 
@@ -80,7 +85,7 @@ public class ExpenseHubDbContext : DbContext
                 .IsUnique();
         });
 
-        modelBuilder.Entity<ExpenseHistory>(entity =>
+        builder.Entity<ExpenseHistory>(entity =>
         {
             entity.ToTable("ExpenseHistories");
 
@@ -108,7 +113,7 @@ public class ExpenseHubDbContext : DbContext
             entity.HasIndex(history => new { history.ExpenseId, history.OccurredAtUtc });
         });
 
-        modelBuilder.Entity<PaymentRecord>(entity =>
+        builder.Entity<PaymentRecord>(entity =>
         {
             entity.ToTable("PaymentRecords");
 
