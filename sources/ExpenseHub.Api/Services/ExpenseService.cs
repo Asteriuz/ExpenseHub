@@ -1,34 +1,38 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using ExpenseHub.Api.Data;
 using ExpenseHub.Api.Domain;
 using ExpenseHub.Api.Dtos;
+using ExpenseHub.Api.Identity;
 using Microsoft.EntityFrameworkCore;
 
 namespace ExpenseHub.Api.Services;
 
 /// <summary>
-/// Cria e edita rascunhos de reembolso, aplicando as regras de campo, ownership e estado
-/// na camada de serviço e registrando o histórico na mesma operação lógica de persistência.
+/// Implementa as regras de negócio dos reembolsos na camada de serviço: criação e
+/// edição de rascunhos, envio para aprovação e consulta por perfil, sempre com
+/// proprietário, ator e instantes UTC derivados do token e do relógio do servidor.
 /// </summary>
 public sealed class ExpenseService : IExpenseService
 {
-    private const decimal MinAmount = 0.01m;
+    private const decimal MinimumAmount = 0.01m;
 
-    private const decimal MaxAmount = 2147483647.00m;
+    private const decimal MaximumAmount = 2147483647.00m;
 
-    private const int MinDescriptionLength = 10;
+    private const int MinimumDescriptionLength = 10;
 
-    private const int MaxDescriptionLength = 500;
+    private const int MaximumDescriptionLength = 500;
 
     private const string CreateAction = "Criar";
 
     private const string EditAction = "Editar";
 
-    private const string NoCategoryLabel = "(sem categoria)";
+    private const string SubmitAction = "Enviar";
 
     private readonly ExpenseHubDbContext _dbContext;
 
@@ -36,7 +40,7 @@ public sealed class ExpenseService : IExpenseService
 
     /// <summary>Inicializa o serviço com o contexto de dados e o relógio do servidor.</summary>
     /// <param name="dbContext">Contexto do Entity Framework Core.</param>
-    /// <param name="timeProvider">Relógio do servidor, fonte exclusiva dos instantes UTC.</param>
+    /// <param name="timeProvider">Relógio do servidor, usado para todos os instantes UTC.</param>
     public ExpenseService(ExpenseHubDbContext dbContext, TimeProvider timeProvider)
     {
         _dbContext = dbContext;
@@ -46,10 +50,9 @@ public sealed class ExpenseService : IExpenseService
     /// <inheritdoc />
     public async Task<CreateExpenseOutcome> CreateAsync(CreateExpenseRequest request, string ownerId, CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
+        ArgumentNullException.ThrowIfNull(request);
 
-        List<string> errors = ValidateInput(request.Description, request.Amount, request.ExpenseDate);
-        await EnsureCategoryExistsAsync(request.ExpenseCategoryId, errors, cancellationToken);
+        List<string> errors = await ValidateAsync(request, cancellationToken);
         if (errors.Count > 0)
         {
             return CreateExpenseOutcome.Invalid(errors);
@@ -62,22 +65,30 @@ public sealed class ExpenseService : IExpenseService
             Description = request.Description,
             Amount = request.Amount,
             ExpenseDate = request.ExpenseDate,
-            State = ExpenseState.Draft,
             ExpenseCategoryId = request.ExpenseCategoryId,
+            State = ExpenseState.Draft,
             CreatedAtUtc = nowUtc,
         };
 
         _dbContext.Expenses.Add(expense);
-        AddHistory(expense, CreateAction, ownerId, nowUtc, previousState: null, newState: ExpenseState.Draft, draftChangesSummary: null);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        _dbContext.ExpenseHistories.Add(new ExpenseHistory
+        {
+            ExpenseId = expense.Id,
+            Action = CreateAction,
+            ActorId = ownerId,
+            OccurredAtUtc = nowUtc,
+            PreviousState = null,
+            NewState = ExpenseState.Draft,
+        });
 
-        return CreateExpenseOutcome.Created(ToResponse(expense));
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return CreateExpenseOutcome.Created(ExpenseResponse.FromExpense(expense));
     }
 
     /// <inheritdoc />
     public async Task<UpdateExpenseOutcome> UpdateAsync(Guid id, UpdateExpenseRequest request, string ownerId, CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
+        ArgumentNullException.ThrowIfNull(request);
 
         Expense? expense = await _dbContext.Expenses
             .FirstOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
@@ -96,153 +107,223 @@ public sealed class ExpenseService : IExpenseService
             return UpdateExpenseOutcome.NotDraft();
         }
 
-        List<string> errors = ValidateInput(request.Description, request.Amount, request.ExpenseDate);
-        await EnsureCategoryExistsAsync(request.ExpenseCategoryId, errors, cancellationToken);
+        List<string> errors = await ValidateAsync(request, cancellationToken);
         if (errors.Count > 0)
         {
             return UpdateExpenseOutcome.Invalid(errors);
         }
 
-        List<string> changes = CollectChanges(expense, request);
-        if (changes.Count > 0)
+        List<string> changes = DescribeChanges(expense, request);
+        if (changes.Count == 0)
         {
-            DateTime nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-            expense.Description = request.Description;
-            expense.Amount = request.Amount;
-            expense.ExpenseDate = request.ExpenseDate;
-            expense.ExpenseCategoryId = request.ExpenseCategoryId;
-            expense.UpdatedAtUtc = nowUtc;
-
-            AddHistory(expense, EditAction, ownerId, nowUtc, previousState: ExpenseState.Draft, newState: null, draftChangesSummary: string.Join("; ", changes));
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            return UpdateExpenseOutcome.Updated(ExpenseResponse.FromExpense(expense));
         }
 
-        return UpdateExpenseOutcome.Updated(ToResponse(expense));
+        DateTime nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        expense.Description = request.Description;
+        expense.Amount = request.Amount;
+        expense.ExpenseDate = request.ExpenseDate;
+        expense.UpdatedAtUtc = nowUtc;
+
+        _dbContext.ExpenseHistories.Add(new ExpenseHistory
+        {
+            ExpenseId = expense.Id,
+            Action = EditAction,
+            ActorId = ownerId,
+            OccurredAtUtc = nowUtc,
+            PreviousState = ExpenseState.Draft,
+            NewState = null,
+            DraftChangesSummary = string.Join("; ", changes),
+        });
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return UpdateExpenseOutcome.Updated(ExpenseResponse.FromExpense(expense));
     }
 
-    private List<string> ValidateInput(string description, decimal amount, DateOnly expenseDate)
+    /// <inheritdoc />
+    public async Task<SubmitExpenseOutcome> SubmitAsync(Guid id, string ownerId, CancellationToken cancellationToken)
     {
-        List<string> errors = [];
-
-        if (string.IsNullOrWhiteSpace(description))
+        Expense? expense = await _dbContext.Expenses
+            .FirstOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+        if (expense is null)
         {
-            errors.Add("A descrição é obrigatória.");
-        }
-        else if (description.Length < MinDescriptionLength || description.Length > MaxDescriptionLength)
-        {
-            errors.Add("A descrição deve ter entre 10 e 500 caracteres.");
+            return SubmitExpenseOutcome.NotFound();
         }
 
-        if (amount < MinAmount || amount > MaxAmount)
+        if (!string.Equals(expense.OwnerId, ownerId, StringComparison.Ordinal))
         {
-            errors.Add("O valor deve estar entre 0,01 e 2.147.483.647,00.");
+            return SubmitExpenseOutcome.Forbidden();
         }
 
-        DateOnly todayUtc = DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime);
-        if (expenseDate == default)
+        if (expense.State != ExpenseState.Draft)
         {
-            errors.Add("A data da despesa é obrigatória.");
-        }
-        else if (expenseDate > todayUtc)
-        {
-            errors.Add("A data da despesa não pode estar no futuro.");
+            return SubmitExpenseOutcome.NotDraft();
         }
 
-        return errors;
+        DateTime nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        expense.State = ExpenseState.Submitted;
+        _dbContext.ExpenseHistories.Add(new ExpenseHistory
+        {
+            ExpenseId = expense.Id,
+            Action = SubmitAction,
+            ActorId = ownerId,
+            OccurredAtUtc = nowUtc,
+            PreviousState = ExpenseState.Draft,
+            NewState = ExpenseState.Submitted,
+        });
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return SubmitExpenseOutcome.Submitted(ExpenseResponse.FromExpense(expense));
     }
 
-    private async Task EnsureCategoryExistsAsync(Guid? expenseCategoryId, List<string> errors, CancellationToken cancellationToken)
+    /// <inheritdoc />
+    public async Task<ListExpensesOutcome> ListAsync(IReadOnlyList<string> roles, string actorId, CancellationToken cancellationToken)
     {
-        if (expenseCategoryId is not { } categoryId)
+        (bool isEmployee, bool isApprover, bool isFinance, bool isAuditor) = GetReadScopes(roles);
+        if (!isEmployee && !isApprover && !isFinance && !isAuditor)
         {
-            return;
+            return ListExpensesOutcome.Forbidden();
         }
 
-        bool categoryExists = await _dbContext.ExpenseCategories
-            .AnyAsync(category => category.Id == categoryId, cancellationToken);
-        if (!categoryExists)
-        {
-            errors.Add("A categoria informada não existe.");
-        }
+        List<Expense> expenses = await _dbContext.Expenses
+            .Where(BuildReadScope(actorId, isEmployee, isApprover, isFinance, isAuditor))
+            .OrderByDescending(expense => expense.CreatedAtUtc)
+            .ThenBy(expense => expense.Id)
+            .ToListAsync(cancellationToken);
+
+        return ListExpensesOutcome.Listed(expenses.Select(ExpenseResponse.FromExpense).ToList());
     }
 
-    private static List<string> CollectChanges(Expense expense, UpdateExpenseRequest request)
+    /// <inheritdoc />
+    public async Task<ExpenseDetailOutcome> GetByIdAsync(Guid id, IReadOnlyList<string> roles, string actorId, CancellationToken cancellationToken)
     {
-        List<string> changes = [];
+        (bool isEmployee, bool isApprover, bool isFinance, bool isAuditor) = GetReadScopes(roles);
+        if (!isEmployee && !isApprover && !isFinance && !isAuditor)
+        {
+            return ExpenseDetailOutcome.Forbidden();
+        }
 
+        Expense? expense = await _dbContext.Expenses
+            .Where(BuildReadScope(actorId, isEmployee, isApprover, isFinance, isAuditor))
+            .FirstOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+
+        return expense is null
+            ? ExpenseDetailOutcome.NotFound()
+            : ExpenseDetailOutcome.Found(ExpenseResponse.FromExpense(expense));
+    }
+
+    /// <summary>Determina os escopos de leitura concedidos por cada role do ator.</summary>
+    /// <param name="roles">Roles do ator autenticado, derivadas do token de acesso.</param>
+    /// <returns>Um indicador por role com acesso de leitura.</returns>
+    private static (bool IsEmployee, bool IsApprover, bool IsFinance, bool IsAuditor) GetReadScopes(IReadOnlyList<string> roles)
+    {
+        return (
+            IsEmployee: roles.Contains(Roles.Employee),
+            IsApprover: roles.Contains(Roles.Approver),
+            IsFinance: roles.Contains(Roles.Finance),
+            IsAuditor: roles.Contains(Roles.Auditor));
+    }
+
+    /// <summary>
+    /// Constrói o predicado de visibilidade por perfil, aplicado como filtro no
+    /// IQueryable antes de materializar qualquer resultado.
+    /// </summary>
+    /// <param name="actorId">Identificador do ator autenticado.</param>
+    /// <param name="isEmployee">Indica se o ator possui a role Employee.</param>
+    /// <param name="isApprover">Indica se o ator possui a role Approver.</param>
+    /// <param name="isFinance">Indica se o ator possui a role Finance.</param>
+    /// <param name="isAuditor">Indica se o ator possui a role Auditor.</param>
+    /// <returns>O predicado de visibilidade para consulta no banco.</returns>
+    private static Expression<Func<Expense, bool>> BuildReadScope(string actorId, bool isEmployee, bool isApprover, bool isFinance, bool isAuditor)
+    {
+        return expense =>
+            (isEmployee && expense.OwnerId == actorId) ||
+            (isApprover && expense.State == ExpenseState.Submitted) ||
+            (isFinance && (expense.State == ExpenseState.Approved || expense.State == ExpenseState.Paid)) ||
+            isAuditor;
+    }
+
+    /// <summary>Descreve as alterações de rascunho no formato antes→depois.</summary>
+    /// <param name="expense">Rascunho persistido.</param>
+    /// <param name="request">Campos informados pelo cliente.</param>
+    /// <returns>As alterações efetivas detectadas; vazia quando nada muda.</returns>
+    private static List<string> DescribeChanges(Expense expense, UpdateExpenseRequest request)
+    {
+        List<string> changes = new();
         if (!string.Equals(expense.Description, request.Description, StringComparison.Ordinal))
         {
-            changes.Add($"Descrição: '{expense.Description}' → '{request.Description}'");
+            changes.Add($"Descrição: \"{expense.Description}\" → \"{request.Description}\"");
         }
 
         if (expense.Amount != request.Amount)
         {
-            changes.Add($"Valor: {FormatAmount(expense.Amount)} → {FormatAmount(request.Amount)}");
+            changes.Add(string.Format(
+                CultureInfo.InvariantCulture,
+                "Valor: {0:F2} → {1:F2}",
+                expense.Amount,
+                request.Amount));
         }
 
         if (expense.ExpenseDate != request.ExpenseDate)
         {
-            changes.Add($"Data da despesa: {FormatDate(expense.ExpenseDate)} → {FormatDate(request.ExpenseDate)}");
-        }
-
-        if (expense.ExpenseCategoryId != request.ExpenseCategoryId)
-        {
-            changes.Add($"Categoria: {FormatCategory(expense.ExpenseCategoryId)} → {FormatCategory(request.ExpenseCategoryId)}");
+            changes.Add(string.Format(
+                CultureInfo.InvariantCulture,
+                "Data da despesa: {0:yyyy-MM-dd} → {1:yyyy-MM-dd}",
+                expense.ExpenseDate,
+                request.ExpenseDate));
         }
 
         return changes;
     }
 
-    private void AddHistory(
-        Expense expense,
-        string action,
-        string actorId,
-        DateTime occurredAtUtc,
-        ExpenseState? previousState,
-        ExpenseState? newState,
-        string? draftChangesSummary)
+    /// <summary>Valida os campos de rascunho no relógio do servidor e no banco.</summary>
+    /// <param name="request">Campos informados pelo cliente.</param>
+    /// <param name="cancellationToken">Token de cancelamento da requisição.</param>
+    /// <returns>As mensagens de erro; vazia quando a entrada é válida.</returns>
+    private async Task<List<string>> ValidateAsync(IExpenseDraftRequest request, CancellationToken cancellationToken)
     {
-        _dbContext.ExpenseHistories.Add(new ExpenseHistory
+        List<string> errors = new();
+        if (string.IsNullOrWhiteSpace(request.Description))
         {
-            ExpenseId = expense.Id,
-            Action = action,
-            ActorId = actorId,
-            OccurredAtUtc = occurredAtUtc,
-            PreviousState = previousState,
-            NewState = newState,
-            RejectionJustification = null,
-            DraftChangesSummary = draftChangesSummary,
-        });
-    }
-
-    private static ExpenseResponse ToResponse(Expense expense)
-    {
-        return new ExpenseResponse
+            errors.Add("A descrição é obrigatória.");
+        }
+        else if (request.Description.Length < MinimumDescriptionLength || request.Description.Length > MaximumDescriptionLength)
         {
-            Id = expense.Id,
-            OwnerId = expense.OwnerId,
-            Description = expense.Description,
-            Amount = expense.Amount,
-            ExpenseDate = expense.ExpenseDate,
-            State = expense.State.ToString(),
-            ExpenseCategoryId = expense.ExpenseCategoryId,
-            CreatedAtUtc = expense.CreatedAtUtc,
-            UpdatedAtUtc = expense.UpdatedAtUtc,
-        };
-    }
+            errors.Add(string.Format(
+                CultureInfo.InvariantCulture,
+                "A descrição deve ter entre {0} e {1} caracteres.",
+                MinimumDescriptionLength,
+                MaximumDescriptionLength));
+        }
 
-    private static string FormatAmount(decimal amount)
-    {
-        return amount.ToString("F2", CultureInfo.InvariantCulture);
-    }
+        if (request.Amount < MinimumAmount || request.Amount > MaximumAmount)
+        {
+            errors.Add(string.Format(
+                CultureInfo.InvariantCulture,
+                "O valor deve estar entre {0} e {1}.",
+                MinimumAmount,
+                MaximumAmount));
+        }
 
-    private static string FormatDate(DateOnly date)
-    {
-        return date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-    }
+        if (request.ExpenseDate == default)
+        {
+            errors.Add("A data da despesa é obrigatória.");
+        }
+        else
+        {
+            DateOnly todayUtc = DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime);
+            if (request.ExpenseDate > todayUtc)
+            {
+                errors.Add("A data da despesa não pode estar no futuro.");
+            }
+        }
 
-    private static string FormatCategory(Guid? expenseCategoryId)
-    {
-        return expenseCategoryId?.ToString() ?? NoCategoryLabel;
+        if (request.ExpenseCategoryId is { } categoryId
+            && !await _dbContext.ExpenseCategories.AnyAsync(category => category.Id == categoryId, cancellationToken))
+        {
+            errors.Add("A categoria informada não existe.");
+        }
+
+        return errors;
     }
 }

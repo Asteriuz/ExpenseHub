@@ -219,6 +219,53 @@ As rotas são protegidas por padrão (política de fallback exige autenticação
 - anônimo em rota protegida → `401` com `ProblemDetails` (`application/problem+json`);
 - autenticado sem a role exigida → `403` com `ProblemDetails` (`application/problem+json`).
 
+## Reembolsos — rascunho (issue I04)
+
+### Criar rascunho
+
+`POST /api/expenses` exige a role `Employee` e recebe:
+
+```json
+{
+  "description": "Passagem de táxi a serviço",
+  "amount": 89.90,
+  "expenseDate": "2026-10-10",
+  "expenseCategoryId": "6f1c2b3a-0000-0000-0000-000000000000"
+}
+```
+
+- o DTO contém apenas `description`, `amount`, `expenseDate` e `expenseCategoryId`
+  (opcional); o proprietário (`ownerId`), o estado, o ator e os timestamps são sempre
+  derivados do token JWT e do relógio do servidor (UTC) — nunca do cliente;
+- validações: descrição obrigatória de 10 a 500 caracteres; valor `decimal` entre
+  R$ 0,01 e R$ 2.147.483.647,00 (`Int32.MaxValue`); data da despesa preenchida e não
+  futura, avaliada no relógio do servidor em UTC; `expenseCategoryId`, quando
+  informada, deve existir;
+- sucesso → `201` com o reembolso criado em estado `Draft`;
+- entrada inválida ou categoria inexistente → `400` com `ProblemDetails`;
+- anônimo → `401`; autenticado sem a role `Employee` → `403`.
+
+### Editar rascunho próprio
+
+`PUT /api/expenses/{id}` exige a role `Employee`, segue as mesmas regras de campo e
+somente edita reembolso próprio em estado `Draft`. Decisões de contrato:
+
+- reembolso inexistente (ou identificador malformado) → `404`;
+- reembolso existente **não próprio** → `403`. Decisão documentada: o recurso existe,
+  porém o ator autenticado não tem permissão sobre ele — caso previsto pelo contrato
+  `403 = autenticado sem permissão`. A escolha mantém consistência com as proibições
+  de `403` para não proprietário nas demais operações de escrita (enviar, aprovar,
+  pagar); a regra do `404` fica reservada ao escopo de **leitura**;
+- estado diferente de `Draft` → `409` (transição incompatível); a edição nunca altera
+  o estado do reembolso;
+- entrada inválida → `400`;
+- sucesso → `200` com o rascunho atualizado.
+
+A criação e a edição gravam o registro de histórico (`Criar`/`Editar`, com ator,
+instante UTC e resumo das alterações antes→depois) na **mesma operação lógica** de
+persistência que o próprio reembolso (`SaveChanges` único). Edição sem alterações
+efetivas responde `200` e não grava histórico.
+
 ## Testes
 
 Somente testes unitários escritos por você entram na nota. Testes de integração, end-to-end ou de interface são permitidos, mas opcionais e sem pontuação.
