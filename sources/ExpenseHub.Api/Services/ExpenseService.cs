@@ -254,6 +254,74 @@ public sealed class ExpenseService : IExpenseService
             : ExpenseDetailOutcome.Found(ExpenseResponse.FromExpense(expense));
     }
 
+    /// <inheritdoc />
+    public async Task<PayExpenseOutcome> PayAsync(Guid id, string actorId, CancellationToken cancellationToken)
+    {
+        Expense? expense = await _dbContext.Expenses
+            .FirstOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+        if (expense is null)
+        {
+            return PayExpenseOutcome.NotFound();
+        }
+
+        if (string.Equals(expense.OwnerId, actorId, StringComparison.Ordinal))
+        {
+            return PayExpenseOutcome.Forbidden();
+        }
+
+        if (expense.State != ExpenseState.Approved)
+        {
+            return PayExpenseOutcome.NotApproved();
+        }
+
+        if (await _dbContext.PaymentRecords.AnyAsync(payment => payment.ExpenseId == id, cancellationToken))
+        {
+            return PayExpenseOutcome.NotApproved();
+        }
+
+        DateTime nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        expense.State = ExpenseState.Paid;
+        PaymentRecord payment = new()
+        {
+            ExpenseId = expense.Id,
+            ActorId = actorId,
+            PaidAtUtc = nowUtc,
+        };
+        _dbContext.PaymentRecords.Add(payment);
+        _expenseHistoryService.RecordTransition(expense, actorId, nowUtc, ExpenseState.Approved, ExpenseState.Paid);
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return PayExpenseOutcome.Paid(
+            ExpenseResponse.FromExpense(expense),
+            new PaymentResponse { Id = payment.Id, ExpenseId = payment.ExpenseId, ActorId = payment.ActorId, PaidAtUtc = payment.PaidAtUtc });
+    }
+
+    /// <inheritdoc />
+    public async Task<ExpenseHistoryOutcome> GetHistoryAsync(Guid id, IReadOnlyList<string> roles, string actorId, CancellationToken cancellationToken)
+    {
+        (bool isEmployee, bool isApprover, bool isFinance, bool isAuditor) = GetReadScopes(roles);
+        if (!isEmployee && !isApprover && !isFinance && !isAuditor)
+        {
+            return ExpenseHistoryOutcome.Forbidden();
+        }
+
+        bool exists = await _dbContext.Expenses
+            .Where(BuildReadScope(actorId, isEmployee, isApprover, isFinance, isAuditor))
+            .AnyAsync(candidate => candidate.Id == id, cancellationToken);
+        if (!exists)
+        {
+            return ExpenseHistoryOutcome.NotFound();
+        }
+
+        List<ExpenseHistory> entries = await _dbContext.ExpenseHistories
+            .Where(history => history.ExpenseId == id)
+            .OrderBy(history => history.OccurredAtUtc)
+            .ThenBy(history => history.Id)
+            .ToListAsync(cancellationToken);
+
+        return ExpenseHistoryOutcome.Found(entries.Select(ExpenseHistoryResponse.FromHistory).ToList());
+    }
+
     /// <summary>Determina os escopos de leitura concedidos por cada role do ator.</summary>
     /// <param name="roles">Roles do ator autenticado, derivadas do token de acesso.</param>
     /// <returns>Um indicador por role com acesso de leitura.</returns>

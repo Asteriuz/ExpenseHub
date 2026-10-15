@@ -309,6 +309,39 @@ relógio do servidor. Contrato:
 ou nova decisão. Tentativas sobre esses estados retornam `409` e não alteram o
 histórico.
 
+## Reembolsos — pagamento e histórico (issue I08)
+
+### Pagar reembolso
+
+`POST /api/expenses/{id}/pay` exige a role `Finance` e transiciona
+`Approved → Paid`. O ator e o instante UTC são derivados do token e do relógio
+do servidor, e um `PaymentRecord` vinculado ao reembolso é persistido **na mesma
+operação lógica** da transição (mesmo `SaveChanges` que grava estado, pagamento e
+histórico). Contrato:
+
+- somente `Finance` **não proprietário** paga: o proprietário que acumula a role
+  `Finance` recebe `403` (regra contextual validada na camada de serviço);
+- `Employee`/`Approver`/`Auditor`/`Admin` sem a role `Finance` → `403` na rota;
+- estado diferente de `Approved` (incluindo `Draft`, `Submitted` e `Rejected`) ou
+  pagamento repetido → `409`, sem nenhum registro de pagamento ou linha de
+  histórico duplicados;
+- reembolso inexistente → `404`; anônimo → `401`.
+
+### Consultar histórico
+
+`GET /api/expenses/{id}/history` devolve os registros auditáveis do reembolso
+(criar, editar com resumo antes→depois, enviar, aprovar, reprovar com
+justificativa e pagar), do mais antigo ao mais recente. A visibilidade é a mesma
+da consulta de detalhe, aplicada como filtro no `IQueryable`:
+
+- `Employee` → apenas o próprio reembolso;
+- `Approver` → reembolsos em estado `Submitted`;
+- `Finance` → reembolsos em estado `Approved` ou `Paid`;
+- `Auditor` → todos os reembolsos (somente leitura);
+- `Admin` → `403` (a role `Admin` não concede acesso funcional);
+- recurso inexistente ou fora do escopo de leitura → `404`, sem revelar
+  existência; anônimo → `401`.
+
 ## Testes
 
 Somente testes unitários escritos por você entram na nota. Testes de integração, end-to-end ou de interface são permitidos, mas opcionais e sem pontuação.

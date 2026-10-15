@@ -264,6 +264,79 @@ public sealed record RejectExpenseOutcome(RejectExpenseStatus Status, ExpenseRes
     public static RejectExpenseOutcome NotSubmitted() => new(RejectExpenseStatus.NotSubmitted, null, []);
 }
 
+/// <summary>Estado do resultado do pagamento de um reembolso.</summary>
+public enum PayExpenseStatus
+{
+    /// <summary>Reembolso pago com sucesso.</summary>
+    Paid,
+
+    /// <summary>O reembolso pertence ao ator autenticado, que não pode pagar o próprio.</summary>
+    Forbidden,
+
+    /// <summary>Reembolso inexistente ou fora do escopo de leitura do ator.</summary>
+    NotFound,
+
+    /// <summary>Estado do reembolso é diferente de Approved, inclusive pagamento repetido.</summary>
+    NotApproved,
+}
+
+/// <summary>Resultado do pagamento de um reembolso.</summary>
+/// <param name="Status">Estado do resultado.</param>
+/// <param name="Expense">Reembolso pago quando o status é <see cref="PayExpenseStatus.Paid"/>.</param>
+/// <param name="Payment">Registro de pagamento persistido quando o status é <see cref="PayExpenseStatus.Paid"/>.</param>
+public sealed record PayExpenseOutcome(PayExpenseStatus Status, ExpenseResponse? Expense, PaymentResponse? Payment)
+{
+    /// <summary>Cria o resultado de um pagamento bem-sucedido.</summary>
+    /// <param name="expense">Reembolso em estado Paid.</param>
+    /// <param name="payment">Registro de pagamento persistido.</param>
+    /// <returns>O resultado de sucesso.</returns>
+    public static PayExpenseOutcome Paid(ExpenseResponse expense, PaymentResponse payment) => new(PayExpenseStatus.Paid, expense, payment);
+
+    /// <summary>Cria o resultado de ator sem permissão de pagamento do reembolso.</summary>
+    /// <returns>O resultado de acesso negado.</returns>
+    public static PayExpenseOutcome Forbidden() => new(PayExpenseStatus.Forbidden, null, null);
+
+    /// <summary>Cria o resultado de reembolso inexistente ou fora do escopo de leitura.</summary>
+    /// <returns>O resultado de recurso não encontrado.</returns>
+    public static PayExpenseOutcome NotFound() => new(PayExpenseStatus.NotFound, null, null);
+
+    /// <summary>Cria o resultado de estado incompatível com pagamento, inclusive pagamento repetido.</summary>
+    /// <returns>O resultado de conflito de estado.</returns>
+    public static PayExpenseOutcome NotApproved() => new(PayExpenseStatus.NotApproved, null, null);
+}
+
+/// <summary>Estado do resultado da consulta de histórico de um reembolso.</summary>
+public enum ExpenseHistoryStatus
+{
+    /// <summary>Histórico encontrado dentro do escopo de leitura do ator.</summary>
+    Found,
+
+    /// <summary>Reembolso inexistente ou fora do escopo de leitura do ator.</summary>
+    NotFound,
+
+    /// <summary>O ator autenticado não possui nenhuma role com acesso funcional.</summary>
+    Forbidden,
+}
+
+/// <summary>Resultado da consulta de histórico de um reembolso.</summary>
+/// <param name="Status">Estado do resultado.</param>
+/// <param name="Entries">Registros do histórico, do mais antigo ao mais recente, quando o status é <see cref="ExpenseHistoryStatus.Found"/>.</param>
+public sealed record ExpenseHistoryOutcome(ExpenseHistoryStatus Status, IReadOnlyList<ExpenseHistoryResponse> Entries)
+{
+    /// <summary>Cria o resultado de um histórico encontrado.</summary>
+    /// <param name="entries">Registros do histórico do reembolso.</param>
+    /// <returns>O resultado de sucesso.</returns>
+    public static ExpenseHistoryOutcome Found(IReadOnlyList<ExpenseHistoryResponse> entries) => new(ExpenseHistoryStatus.Found, entries);
+
+    /// <summary>Cria o resultado de reembolso inexistente ou fora do escopo de leitura.</summary>
+    /// <returns>O resultado de recurso não encontrado.</returns>
+    public static ExpenseHistoryOutcome NotFound() => new(ExpenseHistoryStatus.NotFound, []);
+
+    /// <summary>Cria o resultado de ator sem acesso funcional.</summary>
+    /// <returns>O resultado de acesso negado.</returns>
+    public static ExpenseHistoryOutcome Forbidden() => new(ExpenseHistoryStatus.Forbidden, []);
+}
+
 /// <summary>Regras de negócio dos reembolsos: rascunhos, envio e consulta por perfil.</summary>
 public interface IExpenseService
 {
@@ -318,4 +391,19 @@ public interface IExpenseService
     /// <param name="cancellationToken">Token de cancelamento da requisição.</param>
     /// <returns>O resultado da consulta.</returns>
     Task<ExpenseDetailOutcome> GetByIdAsync(Guid id, IReadOnlyList<string> roles, string actorId, CancellationToken cancellationToken);
+
+    /// <summary>Paga um reembolso aprovado de outro usuário, transicionando de Approved para Paid.</summary>
+    /// <param name="id">Identificador do reembolso.</param>
+    /// <param name="actorId">Identificador do ator financeiro, derivado do token de acesso.</param>
+    /// <param name="cancellationToken">Token de cancelamento da requisição.</param>
+    /// <returns>O resultado do pagamento.</returns>
+    Task<PayExpenseOutcome> PayAsync(Guid id, string actorId, CancellationToken cancellationToken);
+
+    /// <summary>Consulta o histórico de um reembolso visível ao ator conforme suas roles.</summary>
+    /// <param name="id">Identificador do reembolso.</param>
+    /// <param name="roles">Roles do ator autenticado, derivadas do token de acesso.</param>
+    /// <param name="actorId">Identificador do ator autenticado, derivado do token de acesso.</param>
+    /// <param name="cancellationToken">Token de cancelamento da requisição.</param>
+    /// <returns>O resultado da consulta.</returns>
+    Task<ExpenseHistoryOutcome> GetHistoryAsync(Guid id, IReadOnlyList<string> roles, string actorId, CancellationToken cancellationToken);
 }

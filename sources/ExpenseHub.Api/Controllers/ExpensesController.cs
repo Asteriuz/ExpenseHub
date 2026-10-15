@@ -195,6 +195,51 @@ public sealed class ExpensesController : ControllerBase
         };
     }
 
+    /// <summary>Paga um reembolso aprovado de outro usuário, transicionando de Approved para Paid.</summary>
+    /// <param name="id">Identificador do reembolso.</param>
+    /// <param name="cancellationToken">Token de cancelamento da requisição.</param>
+    /// <returns>O reembolso em estado Paid e o registro de pagamento.</returns>
+    [HttpPost("{id:guid}/pay")]
+    [Authorize(Roles = Roles.Finance)]
+    [ProducesResponseType(typeof(ExpenseResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Pay(Guid id, CancellationToken cancellationToken)
+    {
+        PayExpenseOutcome outcome = await _expenseService.PayAsync(id, GetActorId(), cancellationToken);
+        return outcome.Status switch
+        {
+            PayExpenseStatus.Paid => Ok(outcome.Expense),
+            PayExpenseStatus.Forbidden => AccessDenied(),
+            PayExpenseStatus.NotFound => ExpenseNotFound(),
+            PayExpenseStatus.NotApproved => StateConflict(),
+            _ => throw new InvalidOperationException($"Estado inesperado de pagamento de reembolso: {outcome.Status}."),
+        };
+    }
+
+    /// <summary>Consulta o histórico de um reembolso dentro do escopo de leitura do ator.</summary>
+    /// <param name="id">Identificador do reembolso.</param>
+    /// <param name="cancellationToken">Token de cancelamento da requisição.</param>
+    /// <returns>Os registros do histórico; recurso fora do escopo retorna <c>404</c> sem revelar existência.</returns>
+    [HttpGet("{id:guid}/history")]
+    [ProducesResponseType(typeof(IReadOnlyList<ExpenseHistoryResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetHistory(Guid id, CancellationToken cancellationToken)
+    {
+        ExpenseHistoryOutcome outcome = await _expenseService.GetHistoryAsync(id, GetActorRoles(), GetActorId(), cancellationToken);
+        return outcome.Status switch
+        {
+            ExpenseHistoryStatus.Found => Ok(outcome.Entries),
+            ExpenseHistoryStatus.Forbidden => AccessDenied(),
+            ExpenseHistoryStatus.NotFound => ExpenseNotFound(),
+            _ => throw new InvalidOperationException($"Estado inesperado de consulta de histórico: {outcome.Status}."),
+        };
+    }
+
     /// <summary>Obtém o identificador do ator autenticado, derivado do token de acesso.</summary>
     /// <returns>O identificador do usuário autenticado.</returns>
     private string GetActorId()
