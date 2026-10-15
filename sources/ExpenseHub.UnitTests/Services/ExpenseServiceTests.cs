@@ -677,7 +677,7 @@ public sealed class ExpenseServiceTests
 
     private static ExpenseService CreateService(ExpenseHubDbContext dbContext)
     {
-        return new ExpenseService(dbContext, new FixedTimeProvider(FixedNowUtc));
+        return new ExpenseService(dbContext, new ExpenseHistoryService(dbContext), new FixedTimeProvider(FixedNowUtc));
     }
 
     private static CreateExpenseRequest ValidCreateRequest()

@@ -45,6 +45,7 @@ internal static class Program
 
         builder.Services.AddScoped<IUserRegistrationService, UserRegistrationService>();
         builder.Services.AddScoped<IUserAdminService, UserAdminService>();
+        builder.Services.AddScoped<IExpenseHistoryService, ExpenseHistoryService>();
         builder.Services.AddScoped<IExpenseService, ExpenseService>();
         builder.Services.AddSingleton(TimeProvider.System);
 

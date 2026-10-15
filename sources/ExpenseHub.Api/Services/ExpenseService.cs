@@ -15,8 +15,9 @@ namespace ExpenseHub.Api.Services;
 
 /// <summary>
 /// Implementa as regras de negócio dos reembolsos na camada de serviço: criação e
-/// edição de rascunhos, envio para aprovação e consulta por perfil, sempre com
-/// proprietário, ator e instantes UTC derivados do token e do relógio do servidor.
+/// edição de rascunhos, envio para aprovação, aprovação, reprovação e consulta por
+/// perfil, sempre com proprietário, ator e instantes UTC derivados do token e do
+/// relógio do servidor, e histórico registrado na mesma operação lógica.
 /// </summary>
 public sealed class ExpenseService : IExpenseService
 {
@@ -28,22 +29,24 @@ public sealed class ExpenseService : IExpenseService
 
     private const int MaximumDescriptionLength = 500;
 
-    private const string CreateAction = "Criar";
+    private const int MinimumJustificationLength = 10;
 
-    private const string EditAction = "Editar";
-
-    private const string SubmitAction = "Enviar";
+    private const int MaximumJustificationLength = 500;
 
     private readonly ExpenseHubDbContext _dbContext;
 
+    private readonly IExpenseHistoryService _expenseHistoryService;
+
     private readonly TimeProvider _timeProvider;
 
-    /// <summary>Inicializa o serviço com o contexto de dados e o relógio do servidor.</summary>
+    /// <summary>Inicializa o serviço com o contexto de dados, o serviço de histórico e o relógio do servidor.</summary>
     /// <param name="dbContext">Contexto do Entity Framework Core.</param>
+    /// <param name="expenseHistoryService">Serviço de histórico, alimentado na mesma operação lógica.</param>
     /// <param name="timeProvider">Relógio do servidor, usado para todos os instantes UTC.</param>
-    public ExpenseService(ExpenseHubDbContext dbContext, TimeProvider timeProvider)
+    public ExpenseService(ExpenseHubDbContext dbContext, IExpenseHistoryService expenseHistoryService, TimeProvider timeProvider)
     {
         _dbContext = dbContext;
+        _expenseHistoryService = expenseHistoryService;
         _timeProvider = timeProvider;
     }
 
@@ -71,15 +74,7 @@ public sealed class ExpenseService : IExpenseService
         };
 
         _dbContext.Expenses.Add(expense);
-        _dbContext.ExpenseHistories.Add(new ExpenseHistory
-        {
-            ExpenseId = expense.Id,
-            Action = CreateAction,
-            ActorId = ownerId,
-            OccurredAtUtc = nowUtc,
-            PreviousState = null,
-            NewState = ExpenseState.Draft,
-        });
+        _expenseHistoryService.RecordCreation(expense, ownerId, nowUtc);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return CreateExpenseOutcome.Created(ExpenseResponse.FromExpense(expense));
@@ -125,16 +120,7 @@ public sealed class ExpenseService : IExpenseService
         expense.ExpenseDate = request.ExpenseDate;
         expense.UpdatedAtUtc = nowUtc;
 
-        _dbContext.ExpenseHistories.Add(new ExpenseHistory
-        {
-            ExpenseId = expense.Id,
-            Action = EditAction,
-            ActorId = ownerId,
-            OccurredAtUtc = nowUtc,
-            PreviousState = ExpenseState.Draft,
-            NewState = null,
-            DraftChangesSummary = string.Join("; ", changes),
-        });
+        _expenseHistoryService.RecordDraftChanges(expense, ownerId, nowUtc, string.Join("; ", changes));
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return UpdateExpenseOutcome.Updated(ExpenseResponse.FromExpense(expense));
@@ -162,18 +148,74 @@ public sealed class ExpenseService : IExpenseService
 
         DateTime nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
         expense.State = ExpenseState.Submitted;
-        _dbContext.ExpenseHistories.Add(new ExpenseHistory
-        {
-            ExpenseId = expense.Id,
-            Action = SubmitAction,
-            ActorId = ownerId,
-            OccurredAtUtc = nowUtc,
-            PreviousState = ExpenseState.Draft,
-            NewState = ExpenseState.Submitted,
-        });
+        _expenseHistoryService.RecordTransition(expense, ownerId, nowUtc, ExpenseState.Draft, ExpenseState.Submitted);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return SubmitExpenseOutcome.Submitted(ExpenseResponse.FromExpense(expense));
+    }
+
+    /// <inheritdoc />
+    public async Task<ApproveExpenseOutcome> ApproveAsync(Guid id, string actorId, CancellationToken cancellationToken)
+    {
+        Expense? expense = await _dbContext.Expenses
+            .FirstOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+        if (expense is null)
+        {
+            return ApproveExpenseOutcome.NotFound();
+        }
+
+        if (string.Equals(expense.OwnerId, actorId, StringComparison.Ordinal))
+        {
+            return ApproveExpenseOutcome.Forbidden();
+        }
+
+        if (expense.State != ExpenseState.Submitted)
+        {
+            return ApproveExpenseOutcome.NotSubmitted();
+        }
+
+        DateTime nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        expense.State = ExpenseState.Approved;
+        _expenseHistoryService.RecordTransition(expense, actorId, nowUtc, ExpenseState.Submitted, ExpenseState.Approved);
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return ApproveExpenseOutcome.Approved(ExpenseResponse.FromExpense(expense));
+    }
+
+    /// <inheritdoc />
+    public async Task<RejectExpenseOutcome> RejectAsync(Guid id, RejectExpenseRequest request, string actorId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        List<string> errors = ValidateJustification(request.Justification);
+        if (errors.Count > 0)
+        {
+            return RejectExpenseOutcome.Invalid(errors);
+        }
+
+        Expense? expense = await _dbContext.Expenses
+            .FirstOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+        if (expense is null)
+        {
+            return RejectExpenseOutcome.NotFound();
+        }
+
+        if (string.Equals(expense.OwnerId, actorId, StringComparison.Ordinal))
+        {
+            return RejectExpenseOutcome.Forbidden();
+        }
+
+        if (expense.State != ExpenseState.Submitted)
+        {
+            return RejectExpenseOutcome.NotSubmitted();
+        }
+
+        DateTime nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        expense.State = ExpenseState.Rejected;
+        _expenseHistoryService.RecordTransition(expense, actorId, nowUtc, ExpenseState.Submitted, ExpenseState.Rejected, request.Justification);
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return RejectExpenseOutcome.Rejected(ExpenseResponse.FromExpense(expense));
     }
 
     /// <inheritdoc />
@@ -322,6 +364,28 @@ public sealed class ExpenseService : IExpenseService
             && !await _dbContext.ExpenseCategories.AnyAsync(category => category.Id == categoryId, cancellationToken))
         {
             errors.Add("A categoria informada não existe.");
+        }
+
+        return errors;
+    }
+
+    /// <summary>Valida a justificativa da reprovação informada pelo cliente.</summary>
+    /// <param name="justification">Justificativa informada.</param>
+    /// <returns>As mensagens de erro; vazia quando a entrada é válida.</returns>
+    private static List<string> ValidateJustification(string justification)
+    {
+        List<string> errors = new();
+        if (string.IsNullOrWhiteSpace(justification))
+        {
+            errors.Add("A justificativa é obrigatória.");
+        }
+        else if (justification.Length < MinimumJustificationLength || justification.Length > MaximumJustificationLength)
+        {
+            errors.Add(string.Format(
+                CultureInfo.InvariantCulture,
+                "A justificativa deve ter entre {0} e {1} caracteres.",
+                MinimumJustificationLength,
+                MaximumJustificationLength));
         }
 
         return errors;
