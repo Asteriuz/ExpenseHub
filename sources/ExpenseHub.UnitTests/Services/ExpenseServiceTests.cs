@@ -242,7 +242,7 @@ public sealed class ExpenseServiceTests
         Assert.AreEqual(UpdateExpenseStatus.Forbidden, outcome.Status);
         Expense persisted = await dbContext.Expenses.SingleAsync();
         Assert.AreEqual("Passagem de táxi a serviço", persisted.Description);
-        Assert.AreEqual(0, await dbContext.ExpenseHistories.CountAsync());
+        Assert.IsEmpty(await dbContext.ExpenseHistories.ToListAsync());
     }
 
     /// <summary>Verifica que edição de reembolso inexistente retorna não encontrado.</summary>
@@ -279,7 +279,7 @@ public sealed class ExpenseServiceTests
             CancellationToken.None);
 
         Assert.AreEqual(UpdateExpenseStatus.NotDraft, outcome.Status);
-        Assert.AreEqual(0, await dbContext.ExpenseHistories.CountAsync());
+        Assert.IsEmpty(await dbContext.ExpenseHistories.ToListAsync());
     }
 
     /// <summary>Verifica que edição com valor fora da faixa é rejeitada sem alterar o rascunho.</summary>
@@ -303,7 +303,7 @@ public sealed class ExpenseServiceTests
         Assert.AreEqual(UpdateExpenseStatus.Invalid, outcome.Status);
         Expense persisted = await dbContext.Expenses.SingleAsync();
         Assert.AreEqual(89.90m, persisted.Amount);
-        Assert.AreEqual(0, await dbContext.ExpenseHistories.CountAsync());
+        Assert.IsEmpty(await dbContext.ExpenseHistories.ToListAsync());
     }
 
     /// <summary>Verifica que edição sem alterações efetivas mantém rascunho sem registrar histórico.</summary>
@@ -329,7 +329,342 @@ public sealed class ExpenseServiceTests
 
         Assert.AreEqual(UpdateExpenseStatus.Updated, outcome.Status);
         Assert.IsNull(outcome.Expense!.UpdatedAtUtc);
-        Assert.AreEqual(0, await dbContext.ExpenseHistories.CountAsync());
+        Assert.IsEmpty(await dbContext.ExpenseHistories.ToListAsync());
+    }
+
+    /// <summary>Verifica que o envio pelo proprietário transiciona de Draft para Submitted com histórico.</summary>
+    [TestMethod]
+    public async Task Submit_ByOwner_Draft_TransitionsToSubmittedAndRecordsHistory()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense expense = CreateDraft("employee-a");
+        dbContext.Expenses.Add(expense);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        SubmitExpenseOutcome outcome = await service.SubmitAsync(
+            expense.Id,
+            ownerId: "employee-a",
+            CancellationToken.None);
+
+        Assert.AreEqual(SubmitExpenseStatus.Submitted, outcome.Status);
+        Assert.IsNotNull(outcome.Expense);
+        Assert.AreEqual("Submitted", outcome.Expense.State);
+
+        Expense persisted = await dbContext.Expenses.SingleAsync();
+        Assert.AreEqual(ExpenseState.Submitted, persisted.State);
+        ExpenseHistory history = await dbContext.ExpenseHistories.SingleAsync();
+        Assert.AreEqual("Enviar", history.Action);
+        Assert.AreEqual("employee-a", history.ActorId);
+        Assert.AreEqual(ExpenseState.Draft, history.PreviousState);
+        Assert.AreEqual(ExpenseState.Submitted, history.NewState);
+        Assert.AreEqual(FixedNowUtc.UtcDateTime, history.OccurredAtUtc);
+    }
+
+    /// <summary>Verifica que o envio por quem não é o proprietário é negado sem alterar estado.</summary>
+    [TestMethod]
+    public async Task Submit_ByNonOwner_ReturnsForbiddenAndKeepsDraft()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense expense = CreateDraft("employee-a");
+        dbContext.Expenses.Add(expense);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        SubmitExpenseOutcome outcome = await service.SubmitAsync(
+            expense.Id,
+            ownerId: "employee-b",
+            CancellationToken.None);
+
+        Assert.AreEqual(SubmitExpenseStatus.Forbidden, outcome.Status);
+        Assert.IsNull(outcome.Expense);
+        Assert.AreEqual(ExpenseState.Draft, (await dbContext.Expenses.SingleAsync()).State);
+        Assert.IsEmpty(await dbContext.ExpenseHistories.ToListAsync());
+    }
+
+    /// <summary>Verifica que o envio de reembolso inexistente retorna não encontrado.</summary>
+    [TestMethod]
+    public async Task Submit_WithUnknownId_ReturnsNotFound()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        ExpenseService service = CreateService(dbContext);
+
+        SubmitExpenseOutcome outcome = await service.SubmitAsync(
+            Guid.NewGuid(),
+            ownerId: "employee-a",
+            CancellationToken.None);
+
+        Assert.AreEqual(SubmitExpenseStatus.NotFound, outcome.Status);
+        Assert.IsNull(outcome.Expense);
+    }
+
+    /// <summary>Verifica que o envio repetido retorna conflito sem histórico duplicado.</summary>
+    [TestMethod]
+    public async Task Submit_WhenStateIsNotDraft_ReturnsConflictWithoutDuplicatedHistory()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense expense = CreateDraft("employee-a");
+        expense.State = ExpenseState.Submitted;
+        dbContext.Expenses.Add(expense);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        SubmitExpenseOutcome outcome = await service.SubmitAsync(
+            expense.Id,
+            ownerId: "employee-a",
+            CancellationToken.None);
+
+        Assert.AreEqual(SubmitExpenseStatus.NotDraft, outcome.Status);
+        Assert.IsNull(outcome.Expense);
+        Assert.IsEmpty(await dbContext.ExpenseHistories.ToListAsync());
+    }
+
+    /// <summary>Verifica que o Employee lista somente os próprios reembolsos.</summary>
+    [TestMethod]
+    public async Task List_ByEmployeeOnly_ReturnsOnlyOwnExpenses()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense own = CreateDraft("employee-a");
+        Expense other = CreateDraft("employee-b");
+        dbContext.Expenses.AddRange(own, other);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ListExpensesOutcome outcome = await service.ListAsync(
+            roles: ["Employee"],
+            actorId: "employee-a",
+            CancellationToken.None);
+
+        Assert.AreEqual(ListExpensesStatus.Listed, outcome.Status);
+        ExpenseResponse ownItem = outcome.Items.Single(item => item.Id == own.Id);
+        Assert.IsFalse(outcome.Items.Any(item => item.Id == other.Id));
+        Assert.AreEqual("employee-a", ownItem.OwnerId);
+    }
+
+    /// <summary>Verifica que o Approver lista somente os reembolsos em Submitted.</summary>
+    [TestMethod]
+    public async Task List_ByApproverOnly_ReturnsOnlySubmittedExpenses()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense submitted = CreateDraft("employee-a");
+        submitted.State = ExpenseState.Submitted;
+        Expense draft = CreateDraft("employee-b");
+        Expense approved = CreateDraft("employee-c");
+        approved.State = ExpenseState.Approved;
+        dbContext.Expenses.AddRange(submitted, draft, approved);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ListExpensesOutcome outcome = await service.ListAsync(
+            roles: ["Approver"],
+            actorId: "approver",
+            CancellationToken.None);
+
+        Assert.AreEqual(ListExpensesStatus.Listed, outcome.Status);
+        Assert.HasCount(1, outcome.Items);
+        Assert.AreEqual(submitted.Id, outcome.Items[0].Id);
+    }
+
+    /// <summary>Verifica que o Finance lista somente os reembolsos em Approved e Paid.</summary>
+    [TestMethod]
+    public async Task List_ByFinanceOnly_ReturnsOnlyApprovedAndPaidExpenses()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense approved = CreateDraft("employee-a");
+        approved.State = ExpenseState.Approved;
+        Expense paid = CreateDraft("employee-b");
+        paid.State = ExpenseState.Paid;
+        Expense submitted = CreateDraft("employee-c");
+        submitted.State = ExpenseState.Submitted;
+        dbContext.Expenses.AddRange(approved, paid, submitted);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ListExpensesOutcome outcome = await service.ListAsync(
+            roles: ["Finance"],
+            actorId: "finance",
+            CancellationToken.None);
+
+        Assert.AreEqual(ListExpensesStatus.Listed, outcome.Status);
+        Assert.HasCount(2, outcome.Items);
+        Assert.IsTrue(outcome.Items.Any(item => item.Id == approved.Id));
+        Assert.IsTrue(outcome.Items.Any(item => item.Id == paid.Id));
+    }
+
+    /// <summary>Verifica que o Auditor lista todos os reembolsos, em qualquer estado.</summary>
+    [TestMethod]
+    public async Task List_ByAuditorOnly_ReturnsAllExpenses()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense draft = CreateDraft("employee-a");
+        Expense submitted = CreateDraft("employee-b");
+        submitted.State = ExpenseState.Submitted;
+        Expense paid = CreateDraft("employee-c");
+        paid.State = ExpenseState.Paid;
+        dbContext.Expenses.AddRange(draft, submitted, paid);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ListExpensesOutcome outcome = await service.ListAsync(
+            roles: ["Auditor"],
+            actorId: "auditor",
+            CancellationToken.None);
+
+        Assert.AreEqual(ListExpensesStatus.Listed, outcome.Status);
+        Assert.HasCount(3, outcome.Items);
+    }
+
+    /// <summary>Verifica que roles acumuladas recebem a união dos escopos de leitura.</summary>
+    [TestMethod]
+    public async Task List_WithAccumulatedRoles_ReturnsUnionOfScopes()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense own = CreateDraft("employee-approver");
+        Expense submitted = CreateDraft("employee-a");
+        submitted.State = ExpenseState.Submitted;
+        Expense otherDraft = CreateDraft("employee-b");
+        dbContext.Expenses.AddRange(own, submitted, otherDraft);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ListExpensesOutcome outcome = await service.ListAsync(
+            roles: ["Employee", "Approver"],
+            actorId: "employee-approver",
+            CancellationToken.None);
+
+        Assert.AreEqual(ListExpensesStatus.Listed, outcome.Status);
+        Assert.HasCount(2, outcome.Items);
+        Assert.IsTrue(outcome.Items.Any(item => item.Id == own.Id));
+        Assert.IsTrue(outcome.Items.Any(item => item.Id == submitted.Id));
+        Assert.IsFalse(outcome.Items.Any(item => item.Id == otherDraft.Id));
+    }
+
+    /// <summary>Verifica que ator sem role funcional (Admin) recebe acesso negado.</summary>
+    [TestMethod]
+    public async Task List_WithoutFunctionalRole_ReturnsForbidden()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        dbContext.Expenses.Add(CreateDraft("employee-a"));
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ListExpensesOutcome outcome = await service.ListAsync(
+            roles: ["Admin"],
+            actorId: "admin",
+            CancellationToken.None);
+
+        Assert.AreEqual(ListExpensesStatus.Forbidden, outcome.Status);
+        Assert.HasCount(0, outcome.Items);
+    }
+
+    /// <summary>Verifica que Employee não consulta detalhe de reembolso alheio (404 sem vazar existência).</summary>
+    [TestMethod]
+    public async Task GetById_ByEmployee_ForOtherOwnerExpense_ReturnsNotFound()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense expense = CreateDraft("employee-b");
+        dbContext.Expenses.Add(expense);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ExpenseDetailOutcome outcome = await service.GetByIdAsync(
+            expense.Id,
+            roles: ["Employee"],
+            actorId: "employee-a",
+            CancellationToken.None);
+
+        Assert.AreEqual(ExpenseDetailStatus.NotFound, outcome.Status);
+        Assert.IsNull(outcome.Expense);
+    }
+
+    /// <summary>Verifica que Employee consulta o próprio reembolso.</summary>
+    [TestMethod]
+    public async Task GetById_ByEmployee_ForOwnExpense_ReturnsFound()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense expense = CreateDraft("employee-a");
+        dbContext.Expenses.Add(expense);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ExpenseDetailOutcome outcome = await service.GetByIdAsync(
+            expense.Id,
+            roles: ["Employee"],
+            actorId: "employee-a",
+            CancellationToken.None);
+
+        Assert.AreEqual(ExpenseDetailStatus.Found, outcome.Status);
+        Assert.IsNotNull(outcome.Expense);
+        Assert.AreEqual(expense.Id, outcome.Expense.Id);
+        Assert.AreEqual("employee-a", outcome.Expense.OwnerId);
+    }
+
+    /// <summary>Verifica que Approver consulta detalhe apenas de reembolso em Submitted.</summary>
+    [TestMethod]
+    public async Task GetById_ByApprover_ForSubmittedExpense_ReturnsFound()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense submitted = CreateDraft("employee-a");
+        submitted.State = ExpenseState.Submitted;
+        Expense draft = CreateDraft("employee-b");
+        dbContext.Expenses.AddRange(submitted, draft);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ExpenseDetailOutcome submittedOutcome = await service.GetByIdAsync(
+            submitted.Id,
+            roles: ["Approver"],
+            actorId: "approver",
+            CancellationToken.None);
+        ExpenseDetailOutcome draftOutcome = await service.GetByIdAsync(
+            draft.Id,
+            roles: ["Approver"],
+            actorId: "approver",
+            CancellationToken.None);
+
+        Assert.AreEqual(ExpenseDetailStatus.Found, submittedOutcome.Status);
+        Assert.AreEqual(ExpenseDetailStatus.NotFound, draftOutcome.Status);
+    }
+
+    /// <summary>Verifica que Auditor consulta o detalhe de qualquer reembolso.</summary>
+    [TestMethod]
+    public async Task GetById_ByAuditor_ReturnsFoundForAnyExpense()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense rejected = CreateDraft("employee-a");
+        rejected.State = ExpenseState.Rejected;
+        dbContext.Expenses.Add(rejected);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ExpenseDetailOutcome outcome = await service.GetByIdAsync(
+            rejected.Id,
+            roles: ["Auditor"],
+            actorId: "auditor",
+            CancellationToken.None);
+
+        Assert.AreEqual(ExpenseDetailStatus.Found, outcome.Status);
+        Assert.IsNotNull(outcome.Expense);
+    }
+
+    /// <summary>Verifica que ator sem role funcional não consulta detalhe de reembolso.</summary>
+    [TestMethod]
+    public async Task GetById_WithoutFunctionalRole_ReturnsForbidden()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense expense = CreateDraft("employee-a");
+        dbContext.Expenses.Add(expense);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ExpenseDetailOutcome outcome = await service.GetByIdAsync(
+            expense.Id,
+            roles: ["Admin"],
+            actorId: "admin",
+            CancellationToken.None);
+
+        Assert.AreEqual(ExpenseDetailStatus.Forbidden, outcome.Status);
+        Assert.IsNull(outcome.Expense);
     }
 
     private static ExpenseHubDbContext CreateContext()
