@@ -81,6 +81,68 @@ public sealed class RejectExpenseRequest
     public string Justification { get; set; } = string.Empty;
 }
 
+/// <summary>Registro de pagamento devolvido pela API.</summary>
+public sealed class PaymentResponse
+{
+    /// <summary>Identificador do registro de pagamento, gerado pelo servidor.</summary>
+    public Guid Id { get; set; }
+
+    /// <summary>Identificador do reembolso pago.</summary>
+    public Guid ExpenseId { get; set; }
+
+    /// <summary>Identificador do usuário que registrou o pagamento, derivado do token.</summary>
+    public string ActorId { get; set; } = string.Empty;
+
+    /// <summary>Instante UTC do pagamento, definido pelo servidor.</summary>
+    public DateTime PaidAtUtc { get; set; }
+}
+
+/// <summary>Registro de histórico devolvido pela API.</summary>
+public sealed class ExpenseHistoryResponse
+{
+    /// <summary>Identificador do registro, gerado pelo servidor.</summary>
+    public Guid Id { get; set; }
+
+    /// <summary>Ação executada, como criar, editar, enviar, aprovar, reprovar ou pagar.</summary>
+    public string Action { get; set; } = string.Empty;
+
+    /// <summary>Identificador do usuário que executou a ação, derivado do token.</summary>
+    public string ActorId { get; set; } = string.Empty;
+
+    /// <summary>Instante UTC da ação, definido pelo servidor.</summary>
+    public DateTime OccurredAtUtc { get; set; }
+
+    /// <summary>Estado anterior à ação; nulo na criação.</summary>
+    public string? PreviousState { get; set; }
+
+    /// <summary>Estado resultante da ação; nulo quando o estado não muda, como na edição em rascunho.</summary>
+    public string? NewState { get; set; }
+
+    /// <summary>Justificativa da reprovação; nulo nas demais ações.</summary>
+    public string? RejectionJustification { get; set; }
+
+    /// <summary>Resumo das alterações realizadas em rascunho; nulo nas demais ações.</summary>
+    public string? DraftChangesSummary { get; set; }
+
+    /// <summary>Cria a resposta correspondente a um registro de histórico.</summary>
+    /// <param name="history">Registro de histórico persistido.</param>
+    /// <returns>A resposta com os dados do registro.</returns>
+    public static ExpenseHistoryResponse FromHistory(ExpenseHistory history)
+    {
+        return new ExpenseHistoryResponse
+        {
+            Id = history.Id,
+            Action = history.Action,
+            ActorId = history.ActorId,
+            OccurredAtUtc = history.OccurredAtUtc,
+            PreviousState = history.PreviousState?.ToString(),
+            NewState = history.NewState?.ToString(),
+            RejectionJustification = history.RejectionJustification,
+            DraftChangesSummary = history.DraftChangesSummary,
+        };
+    }
+}
+
 /// <summary>Reembolso devolvido pela API, sem dados de auditoria internos.</summary>
 public sealed class ExpenseResponse
 {
