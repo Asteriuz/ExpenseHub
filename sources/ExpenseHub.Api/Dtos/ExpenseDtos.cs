@@ -68,6 +68,19 @@ public sealed class UpdateExpenseRequest : IExpenseDraftRequest
     public Guid? ExpenseCategoryId { get; set; }
 }
 
+/// <summary>Dados enviados ao endpoint de reprovação de reembolso.</summary>
+/// <remarks>
+/// O DTO contém apenas a justificativa informada pelo cliente: estado, ator e
+/// instante são sempre derivados do token JWT e do relógio do servidor.
+/// </remarks>
+public sealed class RejectExpenseRequest
+{
+    /// <summary>Justificativa da reprovação; obrigatória, entre 10 e 500 caracteres.</summary>
+    [Required]
+    [StringLength(500, MinimumLength = 10)]
+    public string Justification { get; set; } = string.Empty;
+}
+
 /// <summary>Reembolso devolvido pela API, sem dados de auditoria internos.</summary>
 public sealed class ExpenseResponse
 {

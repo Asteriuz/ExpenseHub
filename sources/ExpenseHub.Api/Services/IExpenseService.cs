@@ -177,6 +177,93 @@ public sealed record ExpenseDetailOutcome(ExpenseDetailStatus Status, ExpenseRes
     public static ExpenseDetailOutcome Forbidden() => new(ExpenseDetailStatus.Forbidden, null);
 }
 
+/// <summary>Estado do resultado da aprovação de um reembolso.</summary>
+public enum ApproveExpenseStatus
+{
+    /// <summary>Reembolso aprovado com sucesso.</summary>
+    Approved,
+
+    /// <summary>O reembolso pertence ao ator autenticado, que não pode decidir sobre o próprio.</summary>
+    Forbidden,
+
+    /// <summary>Reembolso inexistente.</summary>
+    NotFound,
+
+    /// <summary>Estado do reembolso é diferente de Submitted, inclusive decisão repetida.</summary>
+    NotSubmitted,
+}
+
+/// <summary>Estado do resultado da reprovação de um reembolso.</summary>
+public enum RejectExpenseStatus
+{
+    /// <summary>Reembolso reprovado com sucesso.</summary>
+    Rejected,
+
+    /// <summary>Justificativa inválida; o reembolso permanece inalterado.</summary>
+    Invalid,
+
+    /// <summary>O reembolso pertence ao ator autenticado, que não pode decidir sobre o próprio.</summary>
+    Forbidden,
+
+    /// <summary>Reembolso inexistente.</summary>
+    NotFound,
+
+    /// <summary>Estado do reembolso é diferente de Submitted, inclusive decisão repetida.</summary>
+    NotSubmitted,
+}
+
+/// <summary>Resultado da aprovação de um reembolso.</summary>
+/// <param name="Status">Estado do resultado.</param>
+/// <param name="Expense">Reembolso aprovado quando o status é <see cref="ApproveExpenseStatus.Approved"/>.</param>
+public sealed record ApproveExpenseOutcome(ApproveExpenseStatus Status, ExpenseResponse? Expense)
+{
+    /// <summary>Cria o resultado de uma aprovação bem-sucedida.</summary>
+    /// <param name="expense">Reembolso em estado Approved.</param>
+    /// <returns>O resultado de sucesso.</returns>
+    public static ApproveExpenseOutcome Approved(ExpenseResponse expense) => new(ApproveExpenseStatus.Approved, expense);
+
+    /// <summary>Cria o resultado de ator sem permissão de decisão sobre o reembolso.</summary>
+    /// <returns>O resultado de acesso negado.</returns>
+    public static ApproveExpenseOutcome Forbidden() => new(ApproveExpenseStatus.Forbidden, null);
+
+    /// <summary>Cria o resultado de reembolso inexistente.</summary>
+    /// <returns>O resultado de recurso não encontrado.</returns>
+    public static ApproveExpenseOutcome NotFound() => new(ApproveExpenseStatus.NotFound, null);
+
+    /// <summary>Cria o resultado de estado incompatível com decisão, inclusive decisão repetida.</summary>
+    /// <returns>O resultado de conflito de estado.</returns>
+    public static ApproveExpenseOutcome NotSubmitted() => new(ApproveExpenseStatus.NotSubmitted, null);
+}
+
+/// <summary>Resultado da reprovação de um reembolso.</summary>
+/// <param name="Status">Estado do resultado.</param>
+/// <param name="Expense">Reembolso reprovado quando o status é <see cref="RejectExpenseStatus.Rejected"/>.</param>
+/// <param name="Errors">Mensagens de validação quando o status é <see cref="RejectExpenseStatus.Invalid"/>.</param>
+public sealed record RejectExpenseOutcome(RejectExpenseStatus Status, ExpenseResponse? Expense, IReadOnlyList<string> Errors)
+{
+    /// <summary>Cria o resultado de uma reprovação bem-sucedida.</summary>
+    /// <param name="expense">Reembolso em estado Rejected.</param>
+    /// <returns>O resultado de sucesso.</returns>
+    public static RejectExpenseOutcome Rejected(ExpenseResponse expense) => new(RejectExpenseStatus.Rejected, expense, []);
+
+    /// <summary>Cria o resultado de justificativa inválida.</summary>
+    /// <param name="errors">Mensagens de validação.</param>
+    /// <returns>O resultado de entrada inválida.</returns>
+    public static RejectExpenseOutcome Invalid(IReadOnlyList<string> errors) => new(RejectExpenseStatus.Invalid, null, errors);
+
+    /// <summary>Cria o resultado de ator sem permissão de decisão sobre o reembolso.</summary>
+    /// <returns>O resultado de acesso negado.</returns>
+    public static RejectExpenseOutcome Forbidden() => new(RejectExpenseStatus.Forbidden, null, []);
+
+    /// <summary>Cria o resultado de reembolso inexistente.</summary>
+    /// <returns>O resultado de recurso não encontrado.</returns>
+    public static RejectExpenseOutcome NotFound() => new(RejectExpenseStatus.NotFound, null, []);
+
+    /// <summary>Cria o resultado de estado incompatível com decisão, inclusive decisão repetida.</summary>
+    /// <returns>O resultado de conflito de estado.</returns>
+    public static RejectExpenseOutcome NotSubmitted() => new(RejectExpenseStatus.NotSubmitted, null, []);
+}
+
 /// <summary>Regras de negócio dos reembolsos: rascunhos, envio e consulta por perfil.</summary>
 public interface IExpenseService
 {
@@ -201,6 +288,21 @@ public interface IExpenseService
     /// <param name="cancellationToken">Token de cancelamento da requisição.</param>
     /// <returns>O resultado do envio.</returns>
     Task<SubmitExpenseOutcome> SubmitAsync(Guid id, string ownerId, CancellationToken cancellationToken);
+
+    /// <summary>Aprova um reembolso de outro usuário, transicionando de Submitted para Approved.</summary>
+    /// <param name="id">Identificador do reembolso.</param>
+    /// <param name="actorId">Identificador do ator aprovador, derivado do token de acesso.</param>
+    /// <param name="cancellationToken">Token de cancelamento da requisição.</param>
+    /// <returns>O resultado da aprovação.</returns>
+    Task<ApproveExpenseOutcome> ApproveAsync(Guid id, string actorId, CancellationToken cancellationToken);
+
+    /// <summary>Reprova um reembolso de outro usuário, transicionando de Submitted para Rejected.</summary>
+    /// <param name="id">Identificador do reembolso.</param>
+    /// <param name="request">Justificativa informada pelo cliente, já validada por DataAnnotations.</param>
+    /// <param name="actorId">Identificador do ator aprovador, derivado do token de acesso.</param>
+    /// <param name="cancellationToken">Token de cancelamento da requisição.</param>
+    /// <returns>O resultado da reprovação.</returns>
+    Task<RejectExpenseOutcome> RejectAsync(Guid id, RejectExpenseRequest request, string actorId, CancellationToken cancellationToken);
 
     /// <summary>Lista os reembolsos visíveis ao ator conforme suas roles, filtrando no IQueryable.</summary>
     /// <param name="roles">Roles do ator autenticado, derivadas do token de acesso.</param>

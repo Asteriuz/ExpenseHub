@@ -105,6 +105,57 @@ public sealed class ExpensesController : ControllerBase
         };
     }
 
+    /// <summary>Aprova um reembolso de outro usuário, transicionando de Submitted para Approved.</summary>
+    /// <param name="id">Identificador do reembolso.</param>
+    /// <param name="cancellationToken">Token de cancelamento da requisição.</param>
+    /// <returns>O reembolso em estado Approved.</returns>
+    [HttpPost("{id:guid}/approve")]
+    [Authorize(Roles = Roles.Approver)]
+    [ProducesResponseType(typeof(ExpenseResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Approve(Guid id, CancellationToken cancellationToken)
+    {
+        ApproveExpenseOutcome outcome = await _expenseService.ApproveAsync(id, GetActorId(), cancellationToken);
+        return outcome.Status switch
+        {
+            ApproveExpenseStatus.Approved => Ok(outcome.Expense),
+            ApproveExpenseStatus.Forbidden => AccessDenied(),
+            ApproveExpenseStatus.NotFound => ExpenseNotFound(),
+            ApproveExpenseStatus.NotSubmitted => StateConflict(),
+            _ => throw new InvalidOperationException($"Estado inesperado de aprovação de reembolso: {outcome.Status}."),
+        };
+    }
+
+    /// <summary>Reprova um reembolso de outro usuário, transicionando de Submitted para Rejected.</summary>
+    /// <param name="id">Identificador do reembolso.</param>
+    /// <param name="request">Justificativa da reprovação informada pelo cliente.</param>
+    /// <param name="cancellationToken">Token de cancelamento da requisição.</param>
+    /// <returns>O reembolso em estado Rejected.</returns>
+    [HttpPost("{id:guid}/reject")]
+    [Authorize(Roles = Roles.Approver)]
+    [ProducesResponseType(typeof(ExpenseResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Reject(Guid id, [FromBody] RejectExpenseRequest request, CancellationToken cancellationToken)
+    {
+        RejectExpenseOutcome outcome = await _expenseService.RejectAsync(id, request, GetActorId(), cancellationToken);
+        return outcome.Status switch
+        {
+            RejectExpenseStatus.Rejected => Ok(outcome.Expense),
+            RejectExpenseStatus.Invalid => InvalidEntry(outcome.Errors),
+            RejectExpenseStatus.Forbidden => AccessDenied(),
+            RejectExpenseStatus.NotFound => ExpenseNotFound(),
+            RejectExpenseStatus.NotSubmitted => StateConflict(),
+            _ => throw new InvalidOperationException($"Estado inesperado de reprovação de reembolso: {outcome.Status}."),
+        };
+    }
+
     /// <summary>Lista os reembolsos no escopo visível ao ator conforme suas roles.</summary>
     /// <param name="cancellationToken">Token de cancelamento da requisição.</param>
     /// <returns>Os reembolsos visíveis; autenticado sem role funcional retorna <c>403</c>.</returns>

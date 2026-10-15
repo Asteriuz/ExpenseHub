@@ -266,6 +266,49 @@ instante UTC e resumo das alterações antes→depois) na **mesma operação ló
 persistência que o próprio reembolso (`SaveChanges` único). Edição sem alterações
 efetivas responde `200` e não grava histórico.
 
+## Reembolsos — decisão (issue I07)
+
+### Serviço de histórico
+
+O registro de histórico é centralizado no serviço `ExpenseHistoryService`: toda
+transição (criar, editar, enviar, aprovar, reprovar) é gravada **na mesma operação
+lógica** da alteração de estado — um único `SaveChanges` persiste o reembolso e a
+linha de histórico, de modo que uma falha de persistência nunca deixa estado e
+histórico divergentes. Cada entrada registra ação, reembolso, ator (derivado do
+token), instante UTC (derivado do relógio do servidor), estado anterior, estado
+posterior e, na reprovação, a justificativa.
+
+### Aprovar reembolso
+
+`POST /api/expenses/{id}/approve` exige a role `Approver` e transiciona
+`Submitted → Approved`. O ator e o instante UTC são derivados do token e do
+relógio do servidor. Contrato:
+
+- somente `Approver` **não proprietário** decide: o proprietário que acumula a
+  role `Approver` recebe `403` (regra contextual validada na camada de serviço);
+- `Employee`/`Finance`/`Auditor`/`Admin` sem a role `Approver` → `403` na rota;
+- estado diferente de `Submitted` (incluindo `Draft`, `Approved`, `Rejected` e
+  `Paid`) ou decisão repetida → `409`, sem nenhuma linha de histórico duplicada;
+- reembolso inexistente → `404`; anônimo → `401`.
+
+### Reprovar reembolso
+
+`POST /api/expenses/{id}/reject` exige a role `Approver`, transiciona
+`Submitted → Rejected` e recebe `{ "justification": "..." }`:
+
+- a justificativa é **obrigatória**, com 10 a 500 caracteres; vazia, com espaços
+  apenas, curta ou longa → `400` com `ProblemDetails` (validação declarativa no
+  DTO e revalidação na camada de serviço);
+- as mesmas regras de autorização e estado da aprovação se aplicam: proprietário
+  com a role `Approver` → `403`; estado não `Submitted` ou decisão repetida →
+  `409` sem histórico duplicado; inexistente → `404`; anônimo → `401`.
+
+### Estados finais
+
+`Rejected` e `Paid` são estados finais: não há reabertura, cancelamento, reenvio
+ou nova decisão. Tentativas sobre esses estados retornam `409` e não alteram o
+histórico.
+
 ## Testes
 
 Somente testes unitários escritos por você entram na nota. Testes de integração, end-to-end ou de interface são permitidos, mas opcionais e sem pontuação.
