@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 
-namespace ExpenseHub.Api.Dtos;
+namespace ExpenseHub.Api.Validation;
 
 /// <summary>
 /// Exige que a data informada não esteja no futuro, avaliada no relógio do

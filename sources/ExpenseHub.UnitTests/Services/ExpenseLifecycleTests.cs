@@ -20,14 +20,14 @@ namespace ExpenseHub.UnitTests.Services;
 [TestClass]
 public sealed class ExpenseLifecycleTests
 {
-    private static readonly DateTimeOffset StartUtc = new(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset _startUtc = new(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);
 
     /// <summary>Verifica que o fluxo válido transiciona Draft→Submitted→Approved→Paid com histórico completo e ordenado.</summary>
     [TestMethod]
     public async Task FullLifecycle_CreateEditSubmitApprovePay_TransitionsToPaidAndRecordsCompleteHistory()
     {
         using ExpenseHubDbContext dbContext = CreateContext();
-        AdvancingTimeProvider timeProvider = new(StartUtc);
+        AdvancingTimeProvider timeProvider = new(_startUtc);
         ExpenseService service = CreateService(dbContext, timeProvider);
 
         CreateExpenseOutcome created = await service.CreateAsync(
@@ -100,7 +100,7 @@ public sealed class ExpenseLifecycleTests
     public async Task FullLifecycle_WithRejection_RejectedIsFinalAndBlocksFurtherTransitionsWithoutDuplicatedHistory()
     {
         using ExpenseHubDbContext dbContext = CreateContext();
-        ExpenseService service = CreateService(dbContext, new AdvancingTimeProvider(StartUtc));
+        ExpenseService service = CreateService(dbContext, new AdvancingTimeProvider(_startUtc));
 
         CreateExpenseOutcome created = await service.CreateAsync(
             ValidCreateRequest(),
@@ -189,21 +189,21 @@ public sealed class ExpenseLifecycleTests
     /// <summary>Relógio fixo que avança um minuto a cada consulta, para ordenar os instantes UTC de forma determinística.</summary>
     private sealed class AdvancingTimeProvider : TimeProvider
     {
-        private DateTimeOffset utcNow;
+        private DateTimeOffset _utcNow;
 
         /// <summary>Inicializa o relógio com o instante inicial informado.</summary>
         /// <param name="startUtc">Instante UTC inicial retornado pelo relógio.</param>
         public AdvancingTimeProvider(DateTimeOffset startUtc)
         {
-            this.utcNow = startUtc;
+            _utcNow = startUtc;
         }
 
         /// <summary>Retorna o instante UTC atual e avança o relógio em um minuto.</summary>
         /// <returns>O instante UTC corrente antes do avanço.</returns>
         public override DateTimeOffset GetUtcNow()
         {
-            DateTimeOffset current = this.utcNow;
-            this.utcNow = current.AddMinutes(1);
+            DateTimeOffset current = _utcNow;
+            _utcNow = current.AddMinutes(1);
             return current;
         }
     }

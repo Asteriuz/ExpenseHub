@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel.DataAnnotations;
 using ExpenseHub.Api.Domain;
+using ExpenseHub.Api.Validation;
 
 namespace ExpenseHub.Api.Dtos;
 

@@ -19,7 +19,7 @@ namespace ExpenseHub.UnitTests.Services;
 [TestClass]
 public sealed class ExpenseDecisionTests
 {
-    private static readonly DateTimeOffset FixedNowUtc = new(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset _fixedNowUtc = new(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);
 
     /// <summary>Verifica que Approver não proprietário aprova reembolso em Submitted com histórico.</summary>
     [TestMethod]
@@ -47,7 +47,7 @@ public sealed class ExpenseDecisionTests
         Assert.AreEqual("approver", history.ActorId);
         Assert.AreEqual(ExpenseState.Submitted, history.PreviousState);
         Assert.AreEqual(ExpenseState.Approved, history.NewState);
-        Assert.AreEqual(FixedNowUtc.UtcDateTime, history.OccurredAtUtc);
+        Assert.AreEqual(_fixedNowUtc.UtcDateTime, history.OccurredAtUtc);
         Assert.IsNull(history.RejectionJustification);
     }
 
@@ -160,7 +160,7 @@ public sealed class ExpenseDecisionTests
         Assert.AreEqual(ExpenseState.Submitted, history.PreviousState);
         Assert.AreEqual(ExpenseState.Rejected, history.NewState);
         Assert.AreEqual("Recibo não comprova a despesa.", history.RejectionJustification);
-        Assert.AreEqual(FixedNowUtc.UtcDateTime, history.OccurredAtUtc);
+        Assert.AreEqual(_fixedNowUtc.UtcDateTime, history.OccurredAtUtc);
     }
 
     /// <summary>Verifica que o Approver proprietário não reprova o próprio reembolso.</summary>
@@ -383,7 +383,7 @@ public sealed class ExpenseDecisionTests
 
     private static ExpenseService CreateService(ExpenseHubDbContext dbContext)
     {
-        return new ExpenseService(dbContext, new ExpenseHistoryService(dbContext), new FixedTimeProvider(FixedNowUtc));
+        return new ExpenseService(dbContext, new ExpenseHistoryService(dbContext), new FixedTimeProvider(_fixedNowUtc));
     }
 
     private static RejectExpenseRequest ValidRejectRequest()
@@ -403,27 +403,27 @@ public sealed class ExpenseDecisionTests
             Amount = 89.90m,
             ExpenseDate = new DateOnly(2026, 10, 10),
             State = state,
-            CreatedAtUtc = FixedNowUtc.UtcDateTime,
+            CreatedAtUtc = _fixedNowUtc.UtcDateTime,
         };
     }
 
     /// <summary>Relógio fixo usado nos testes para tornar os instantes UTC determinísticos.</summary>
     private sealed class FixedTimeProvider : TimeProvider
     {
-        private readonly DateTimeOffset utcNow;
+        private readonly DateTimeOffset _utcNow;
 
         /// <summary>Inicializa o relógio com o instante fixo informado.</summary>
         /// <param name="utcNow">Instante UTC fixo retornado pelo relógio.</param>
         public FixedTimeProvider(DateTimeOffset utcNow)
         {
-            this.utcNow = utcNow;
+            _utcNow = utcNow;
         }
 
         /// <summary>Retorna o instante UTC fixo configurado.</summary>
         /// <returns>O instante UTC fixo.</returns>
         public override DateTimeOffset GetUtcNow()
         {
-            return this.utcNow;
+            return _utcNow;
         }
     }
 }

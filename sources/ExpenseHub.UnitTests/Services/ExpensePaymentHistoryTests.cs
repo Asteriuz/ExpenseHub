@@ -19,7 +19,7 @@ namespace ExpenseHub.UnitTests.Services;
 [TestClass]
 public sealed class ExpensePaymentHistoryTests
 {
-    private static readonly DateTimeOffset FixedNowUtc = new(2026, 10, 15, 15, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset _fixedNowUtc = new(2026, 10, 15, 15, 0, 0, TimeSpan.Zero);
 
     /// <summary>Verifica que Finance não proprietário paga reembolso Approved, com registro e histórico.</summary>
     [TestMethod]
@@ -38,14 +38,14 @@ public sealed class ExpensePaymentHistoryTests
         Assert.AreEqual("Paid", outcome.Expense.State);
         Assert.IsNotNull(outcome.Payment);
         Assert.AreEqual("finance", outcome.Payment.ActorId);
-        Assert.AreEqual(FixedNowUtc.UtcDateTime, outcome.Payment.PaidAtUtc);
+        Assert.AreEqual(_fixedNowUtc.UtcDateTime, outcome.Payment.PaidAtUtc);
 
         Expense persisted = await dbContext.Expenses.SingleAsync();
         Assert.AreEqual(ExpenseState.Paid, persisted.State);
         PaymentRecord payment = await dbContext.PaymentRecords.SingleAsync();
         Assert.AreEqual(expense.Id, payment.ExpenseId);
         Assert.AreEqual("finance", payment.ActorId);
-        Assert.AreEqual(FixedNowUtc.UtcDateTime, payment.PaidAtUtc);
+        Assert.AreEqual(_fixedNowUtc.UtcDateTime, payment.PaidAtUtc);
         ExpenseHistory history = await dbContext.ExpenseHistories.SingleAsync();
         Assert.AreEqual("Pagar", history.Action);
         Assert.AreEqual("finance", history.ActorId);
@@ -160,7 +160,7 @@ public sealed class ExpensePaymentHistoryTests
             ExpenseId = expense.Id,
             Action = "Criar",
             ActorId = "employee-a",
-            OccurredAtUtc = FixedNowUtc.UtcDateTime.AddMinutes(1),
+            OccurredAtUtc = _fixedNowUtc.UtcDateTime.AddMinutes(1),
             NewState = ExpenseState.Draft,
         });
         dbContext.ExpenseHistories.Add(new ExpenseHistory
@@ -168,7 +168,7 @@ public sealed class ExpensePaymentHistoryTests
             ExpenseId = expense.Id,
             Action = "Pagar",
             ActorId = "finance",
-            OccurredAtUtc = FixedNowUtc.UtcDateTime.AddMinutes(2),
+            OccurredAtUtc = _fixedNowUtc.UtcDateTime.AddMinutes(2),
             PreviousState = ExpenseState.Approved,
             NewState = ExpenseState.Paid,
         });
@@ -200,7 +200,7 @@ public sealed class ExpensePaymentHistoryTests
             ExpenseId = expense.Id,
             Action = "Criar",
             ActorId = "employee-b",
-            OccurredAtUtc = FixedNowUtc.UtcDateTime,
+            OccurredAtUtc = _fixedNowUtc.UtcDateTime,
             NewState = ExpenseState.Draft,
         });
         await dbContext.SaveChangesAsync();
@@ -228,7 +228,7 @@ public sealed class ExpensePaymentHistoryTests
             ExpenseId = expense.Id,
             Action = "Aprovar",
             ActorId = "approver",
-            OccurredAtUtc = FixedNowUtc.UtcDateTime,
+            OccurredAtUtc = _fixedNowUtc.UtcDateTime,
             PreviousState = ExpenseState.Submitted,
             NewState = ExpenseState.Approved,
         });
@@ -259,7 +259,7 @@ public sealed class ExpensePaymentHistoryTests
             ExpenseId = submitted.Id,
             Action = "Enviar",
             ActorId = "employee-a",
-            OccurredAtUtc = FixedNowUtc.UtcDateTime,
+            OccurredAtUtc = _fixedNowUtc.UtcDateTime,
             PreviousState = ExpenseState.Draft,
             NewState = ExpenseState.Submitted,
         });
@@ -297,7 +297,7 @@ public sealed class ExpensePaymentHistoryTests
             ExpenseId = approved.Id,
             Action = "Aprovar",
             ActorId = "approver",
-            OccurredAtUtc = FixedNowUtc.UtcDateTime,
+            OccurredAtUtc = _fixedNowUtc.UtcDateTime,
             PreviousState = ExpenseState.Submitted,
             NewState = ExpenseState.Approved,
         });
@@ -306,7 +306,7 @@ public sealed class ExpensePaymentHistoryTests
             ExpenseId = paid.Id,
             Action = "Pagar",
             ActorId = "finance",
-            OccurredAtUtc = FixedNowUtc.UtcDateTime,
+            OccurredAtUtc = _fixedNowUtc.UtcDateTime,
             PreviousState = ExpenseState.Approved,
             NewState = ExpenseState.Paid,
         });
@@ -381,7 +381,7 @@ public sealed class ExpensePaymentHistoryTests
 
     private static ExpenseService CreateService(ExpenseHubDbContext dbContext)
     {
-        return new ExpenseService(dbContext, new ExpenseHistoryService(dbContext), new FixedTimeProvider(FixedNowUtc));
+        return new ExpenseService(dbContext, new ExpenseHistoryService(dbContext), new FixedTimeProvider(_fixedNowUtc));
     }
 
     private static Expense CreateExpense(string ownerId, ExpenseState state)
@@ -393,27 +393,27 @@ public sealed class ExpensePaymentHistoryTests
             Amount = 89.90m,
             ExpenseDate = new DateOnly(2026, 10, 10),
             State = state,
-            CreatedAtUtc = FixedNowUtc.UtcDateTime,
+            CreatedAtUtc = _fixedNowUtc.UtcDateTime,
         };
     }
 
     /// <summary>Relógio fixo usado nos testes para tornar os instantes UTC determinísticos.</summary>
     private sealed class FixedTimeProvider : TimeProvider
     {
-        private readonly DateTimeOffset utcNow;
+        private readonly DateTimeOffset _utcNow;
 
         /// <summary>Inicializa o relógio com o instante fixo informado.</summary>
         /// <param name="utcNow">Instante UTC fixo retornado pelo relógio.</param>
         public FixedTimeProvider(DateTimeOffset utcNow)
         {
-            this.utcNow = utcNow;
+            _utcNow = utcNow;
         }
 
         /// <summary>Retorna o instante UTC fixo configurado.</summary>
         /// <returns>O instante UTC fixo.</returns>
         public override DateTimeOffset GetUtcNow()
         {
-            return this.utcNow;
+            return _utcNow;
         }
     }
 }
