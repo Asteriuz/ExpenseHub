@@ -4,6 +4,13 @@ Checkpoint de C# em grupos de até 3 pessoas para construção de uma Applicatio
 
 O prazo de entrega é **13 de outubro de 2026**. O grupo deverá implementar autenticação, autorização, fluxo de aprovação e reprovação, pagamento simulado, histórico e testes unitários.
 
+## Integrantes
+
+| RM | Integrante | GitHub |
+|---|---|---|
+| 565065 | Augusto Barcelos Barros | [@Asteriuz](https://github.com/Asteriuz) |
+| 555541 | Juan Francisco Alves Muradas | [@jumura](https://github.com/jumura) |
+
 ## Criar seu repositório
 
 1. Clique em **Use this template**.
@@ -51,6 +58,26 @@ dotnet run --project ./sources/ExpenseHub.Api/ExpenseHub.Api.csproj
 ```
 
 O endpoint inicial `GET /health` existe apenas para confirmar que a aplicação inicia.
+
+## Demonstração
+
+Gravação da suíte de testes de contrato da API ([`utils/test-api.ps1`](utils/test-api.ps1)),
+renderizada com [VHS](https://github.com/charmbracelet/vhs) a partir do tape
+[`utils/test-api.tape`](utils/test-api.tape). A suíte exercita, contra a API em execução,
+os cenários de ponta a ponta: proteção anônima (`401`), autenticação e emissão de JWT,
+cadastro público com validações, gestão de roles pelo Admin, o ciclo completo do
+reembolso (`Draft → Submitted → Approved → Paid`), reprovação com justificativa,
+transições inválidas (`409`), isolamento entre usuários e segregação por papéis
+(`403`/`404`).
+
+![Suíte de testes de contrato da API — ExpenseHub](utils/expensehub-test.gif)
+
+Para reproduzir:
+
+```shell
+dotnet run --project sources/ExpenseHub.Api/ExpenseHub.Api.csproj   # terminal 1 — API em http://localhost:5245
+pwsh -NoProfile -File utils/test-api.ps1                            # terminal 2 — suíte de contrato
+```
 
 ## Documentação
 
@@ -401,6 +428,10 @@ A role `Admin` não concede acesso funcional: apenas administração de usuário
 Somente testes unitários escritos por você entram na nota. Testes de integração, end-to-end ou de interface são permitidos, mas opcionais e sem pontuação.
 
 Os testes unitários devem executar sem banco, rede ou serviço externo.
+
+Além dos testes unitários, o repositório inclui uma suíte opcional de testes de
+contrato HTTP, `utils/test-api.ps1`, executada contra a API em execução — a gravação
+completa está na seção [Demonstração](#demonstração).
 
 ## Entrega
 

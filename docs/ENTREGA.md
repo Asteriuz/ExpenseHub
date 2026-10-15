@@ -11,7 +11,7 @@ está pronto para colar na PR de entrega.
 | Testes unitários | ✅ 72/72 passando | `dotnet test ./sources/ExpenseHub.slnx` (2026-10-15) |
 | CI `code-quality` verde em `main` | ✅ score **100/100** | run [38678190282](https://github.com/Asteriuz/ExpenseHub/actions/runs/38678190282), commit `5a97f3ed229452248970fde95149c4f56620a7a8`; artefato `code-quality-report` (`report.md`: status `passed`, categorias build/security/hygiene/style/best-practices 20/20, nenhum bloqueante) |
 | PRs sem `Closes`/`Fixes`/`Resolves` | ✅ 9/9 PRs conformes | PRs #1–#9 referenciam `Racass/checkpoint-csharpracass-expensehub#N` sem palavras de fechamento |
-| Commits por integrante | ✅ todos com mais de um commit | Asteriuz (16 commits), Juan Muradas (5 commits). O histórico registra dois autores; se o grupo tiver um terceiro integrante, ele ainda precisa registrar seus próprios commits antes da entrega |
+| Commits por integrante | ✅ todos com mais de um commit | Asteriuz — Augusto Barcelos Barros (RM 565065, 16 commits); jumura — Juan Francisco Alves Muradas (RM 555541, 5 commits). Grupo com 2 integrantes, ambos cobertos |
 
 O score 100/100 também vale para a PR de qualidade (run
 [38678019444](https://github.com/Asteriuz/ExpenseHub/actions/runs/38678019444), branch
@@ -42,16 +42,20 @@ O score 100/100 também vale para a PR de qualidade (run
 Entrega final do Checkpoint 2 — ExpenseHub.
 
 - **URL do repositório:** https://github.com/Asteriuz/ExpenseHub
+- **Integrantes:** Augusto Barcelos Barros (RM 565065), Juan Francisco Alves Muradas (RM 555541).
 - **SHA do commit final:** `<preencher com o SHA do commit final após o merge>`
 - **Integração contínua:** workflow `code-quality` verde em `main` — score
   **100/100** (run 38678190282, commit 5a97f3e; artefato `code-quality-report`,
   categorias build/security/hygiene/style/best-practices 20/20, nenhum bloqueante).
 - **Issues implementadas:** Racass/checkpoint-csharpracass-expensehub#1 a #10,
   uma PR por issue (PRs #1–#9), todas referenciadas sem `Closes`/`Fixes`/`Resolves`.
-- **Commits por integrante:** Asteriuz (16), Juan Muradas (5) — todos com mais de
+- **Commits por integrante:** Asteriuz — Augusto Barcelos Barros, RM 565065 (16);
+  jumura — Juan Francisco Alves Muradas, RM 555541 (5) — todos com mais de
   um commit.
 - **Build e testes:** `dotnet build` com 0 warnings/0 erros; `dotnet test` com
   72/72 testes passando.
+- **Demonstração:** gravação da suíte de testes de contrato da API
+  (`utils/test-api.ps1`, gravada com VHS) embutida no README.
 - **Documentação:** README com provider e pacotes, configuração segura
   (user-secrets/variáveis de ambiente), criação/atualização do banco, como iniciar
   a API, nota sobre reautenticação após troca de roles e tabela da matriz de

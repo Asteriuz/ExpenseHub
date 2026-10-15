@@ -34,7 +34,7 @@ public sealed class CreateExpenseRequest : IExpenseDraftRequest
     public string Description { get; set; } = string.Empty;
 
     /// <summary>Valor único do reembolso, em reais; entre 0,01 e Int32.MaxValue.</summary>
-    [Range(typeof(decimal), "0.01", "2147483647.00")]
+    [Range(0.01, 2147483647.00)]
     public decimal Amount { get; set; }
 
     /// <summary>Data da despesa; válida e não futura.</summary>
@@ -58,7 +58,7 @@ public sealed class UpdateExpenseRequest : IExpenseDraftRequest
     public string Description { get; set; } = string.Empty;
 
     /// <summary>Valor único do reembolso, em reais; entre 0,01 e Int32.MaxValue.</summary>
-    [Range(typeof(decimal), "0.01", "2147483647.00")]
+    [Range(0.01, 2147483647.00)]
     public decimal Amount { get; set; }
 
     /// <summary>Data da despesa; válida e não futura.</summary>
