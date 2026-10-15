@@ -667,6 +667,115 @@ public sealed class ExpenseServiceTests
         Assert.IsNull(outcome.Expense);
     }
 
+    /// <summary>Verifica que o Finance consulta o detalhe apenas de reembolsos em Approved e Paid.</summary>
+    [TestMethod]
+    public async Task GetById_ByFinance_ForApprovedAndPaidExpenses_ReturnsFound()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense approved = CreateDraft("employee-a");
+        approved.State = ExpenseState.Approved;
+        Expense paid = CreateDraft("employee-b");
+        paid.State = ExpenseState.Paid;
+        dbContext.Expenses.AddRange(approved, paid);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ExpenseDetailOutcome approvedOutcome = await service.GetByIdAsync(
+            approved.Id,
+            roles: ["Finance"],
+            actorId: "finance",
+            CancellationToken.None);
+        ExpenseDetailOutcome paidOutcome = await service.GetByIdAsync(
+            paid.Id,
+            roles: ["Finance"],
+            actorId: "finance",
+            CancellationToken.None);
+
+        Assert.AreEqual(ExpenseDetailStatus.Found, approvedOutcome.Status);
+        Assert.IsNotNull(approvedOutcome.Expense);
+        Assert.AreEqual(ExpenseDetailStatus.Found, paidOutcome.Status);
+        Assert.IsNotNull(paidOutcome.Expense);
+    }
+
+    /// <summary>Verifica que o Finance não consulta detalhe de reembolso em Draft ou Submitted (404).</summary>
+    [TestMethod]
+    public async Task GetById_ByFinance_ForDraftAndSubmittedExpenses_ReturnsNotFound()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense draft = CreateDraft("employee-a");
+        Expense submitted = CreateDraft("employee-b");
+        submitted.State = ExpenseState.Submitted;
+        dbContext.Expenses.AddRange(draft, submitted);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ExpenseDetailOutcome draftOutcome = await service.GetByIdAsync(
+            draft.Id,
+            roles: ["Finance"],
+            actorId: "finance",
+            CancellationToken.None);
+        ExpenseDetailOutcome submittedOutcome = await service.GetByIdAsync(
+            submitted.Id,
+            roles: ["Finance"],
+            actorId: "finance",
+            CancellationToken.None);
+
+        Assert.AreEqual(ExpenseDetailStatus.NotFound, draftOutcome.Status);
+        Assert.IsNull(draftOutcome.Expense);
+        Assert.AreEqual(ExpenseDetailStatus.NotFound, submittedOutcome.Status);
+        Assert.IsNull(submittedOutcome.Expense);
+    }
+
+    /// <summary>Verifica que edição com descrição fora da faixa é rejeitada sem alterar o rascunho.</summary>
+    [TestMethod]
+    public async Task Update_WithInvalidDescription_ReturnsInvalid()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense expense = CreateDraft(ownerId: "employee-a");
+        dbContext.Expenses.Add(expense);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        UpdateExpenseRequest request = ValidUpdateRequest();
+        request.Description = "curta";
+        UpdateExpenseOutcome outcome = await service.UpdateAsync(
+            expense.Id,
+            request,
+            ownerId: "employee-a",
+            CancellationToken.None);
+
+        Assert.AreEqual(UpdateExpenseStatus.Invalid, outcome.Status);
+        Assert.IsTrue(outcome.Errors.Any(error => error.Contains("descrição", StringComparison.Ordinal)));
+        Expense persisted = await dbContext.Expenses.SingleAsync();
+        Assert.AreEqual("Passagem de táxi a serviço", persisted.Description);
+        Assert.IsEmpty(await dbContext.ExpenseHistories.ToListAsync());
+    }
+
+    /// <summary>Verifica que edição com data de despesa futura é rejeitada sem alterar o rascunho.</summary>
+    [TestMethod]
+    public async Task Update_WithFutureExpenseDate_ReturnsInvalid()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense expense = CreateDraft(ownerId: "employee-a");
+        dbContext.Expenses.Add(expense);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        UpdateExpenseRequest request = ValidUpdateRequest();
+        request.ExpenseDate = new DateOnly(2026, 10, 16);
+        UpdateExpenseOutcome outcome = await service.UpdateAsync(
+            expense.Id,
+            request,
+            ownerId: "employee-a",
+            CancellationToken.None);
+
+        Assert.AreEqual(UpdateExpenseStatus.Invalid, outcome.Status);
+        Assert.IsTrue(outcome.Errors.Any(error => error.Contains("futuro", StringComparison.Ordinal)));
+        Expense persisted = await dbContext.Expenses.SingleAsync();
+        Assert.AreEqual(new DateOnly(2026, 10, 10), persisted.ExpenseDate);
+        Assert.IsEmpty(await dbContext.ExpenseHistories.ToListAsync());
+    }
+
     private static ExpenseHubDbContext CreateContext()
     {
         return new ExpenseHubDbContext(
