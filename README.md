@@ -101,6 +101,7 @@ dotnet ef database update --project sources/ExpenseHub.Api --startup-project sou
 
 A migration inicial `InitialCreate` já está versionada em
 `sources/ExpenseHub.Api/Migrations/`; basta executar `dotnet ef database update`.
+A migration `AddIdentity` adiciona as tabelas do ASP.NET Core Identity.
 
 ### Como iniciar a aplicação
 
@@ -108,8 +109,66 @@ A migration inicial `InitialCreate` já está versionada em
 dotnet run --project sources/ExpenseHub.Api/ExpenseHub.Api.csproj
 ```
 
-Em ambiente de desenvolvimento, o OpenAPI fica em `/openapi/v1.json`. O endpoint
-`GET /health` confirma que a aplicação subiu.
+Ao iniciar, a API aplica as migrations pendentes e executa o seed de identidade
+(idempotente). Em ambiente de desenvolvimento, o OpenAPI fica em `/openapi/v1.json`.
+O endpoint `GET /health` confirma que a aplicação subiu.
+
+## Autenticação e identidade
+
+A API usa **ASP.NET Core Identity** persistido no SQLite (mesmo `ExpenseHubDbContext`,
+que herda de `IdentityDbContext<IdentityUser>`) e autenticação **bearer JWT**
+(`Microsoft.AspNetCore.Authentication.JwtBearer`).
+
+### Roles e seed
+
+O seed cria de forma idempotente as roles `Admin`, `Employee`, `Approver`, `Finance`
+e `Auditor` e **uma única** conta Admin vinculada à role `Admin`. Pode ser executado
+quantas vezes for necessário sem duplicar registros. Nenhum outro usuário é criado
+pelo seed; os demais devem ser cadastrados por HTTP (issue I03).
+
+### Configuração segura (sem segredos no repositório)
+
+| Chave | Origem | Observação |
+|---|---|---|
+| `Jwt:Issuer` | `appsettings.json` | Não é segredo. |
+| `Jwt:Audience` | `appsettings.json` | Não é segredo. |
+| `Jwt:LifetimeMinutes` | `appsettings.json` | Tempo de vida do token. |
+| `Jwt:SigningKey` | user-secrets / variável de ambiente | Mínimo de 32 bytes. **Nunca versionar.** |
+| `Seed:AdminEmail` | `appsettings.json` | E-mail da conta Admin (padrão `admin@expensehub.local`). |
+| `Seed:AdminPassword` | user-secrets / variável de ambiente | **Nunca versionar.** |
+
+```shell
+cd sources/ExpenseHub.Api
+dotnet user-secrets set "Seed:AdminPassword" "<senha-forte>"
+dotnet user-secrets set "Jwt:SigningKey" "<chave-com-32-bytes-ou-mais>"
+```
+
+Alternativamente, use variáveis de ambiente (`Jwt__SigningKey`, `Seed__AdminPassword`).
+Sem esses valores a aplicação falha ao iniciar, com mensagem explícita.
+
+### Login
+
+`POST /login` é público e recebe `{ "email": "...", "password": "..." }`. Credenciais
+válidas devolvem `200` com `{ "accessToken": "...", "tokenType": "Bearer", "expiresAtUtc": "..." }`;
+credenciais inválidas devolvem `401` com `ProblemDetails`. O token carrega o `sub`
+(identificador do usuário) e uma claim `role` por role atribuída.
+
+```shell
+curl -s -X POST http://localhost:5245/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@expensehub.local","password":"<senha>"}'
+```
+
+### Rotas protegidas
+
+As rotas são protegidas por padrão (política de fallback exige autenticação); apenas
+`POST /login` e `GET /health` são anônimas. As respostas diferenciam:
+
+- anônimo em rota protegida → `401` com `ProblemDetails` (`application/problem+json`);
+- autenticado sem a role exigida → `403` com `ProblemDetails` (`application/problem+json`).
+
+Após uma alteração de roles, é necessário autenticar novamente para obter um token
+com as novas claims.
 
 ## Testes
 
