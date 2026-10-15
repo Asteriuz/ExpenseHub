@@ -129,6 +129,25 @@ public sealed class ExpensePaymentHistoryTests
         Assert.HasCount(1, await dbContext.ExpenseHistories.ToListAsync());
     }
 
+    /// <summary>Verifica que roles acumuladas não eliminam a proibição de pagamento do próprio reembolso.</summary>
+    [TestMethod]
+    public async Task Pay_ByOwnerWithAccumulatedEmployeeAndFinanceRoles_ReturnsForbidden()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense expense = CreateExpense("employee-finance", ExpenseState.Approved);
+        dbContext.Expenses.Add(expense);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        PayExpenseOutcome outcome = await service.PayAsync(expense.Id, actorId: "employee-finance", CancellationToken.None);
+
+        Assert.AreEqual(PayExpenseStatus.Forbidden, outcome.Status);
+        Assert.IsNull(outcome.Expense);
+        Assert.AreEqual(ExpenseState.Approved, (await dbContext.Expenses.SingleAsync()).State);
+        Assert.IsEmpty(await dbContext.PaymentRecords.ToListAsync());
+        Assert.IsEmpty(await dbContext.ExpenseHistories.ToListAsync());
+    }
+
     /// <summary>Verifica que o Employee lê o histórico do próprio reembolso completo.</summary>
     [TestMethod]
     public async Task GetHistory_ByEmployeeOwner_ReturnsAllEntriesOfOwnExpense()
@@ -225,6 +244,97 @@ public sealed class ExpensePaymentHistoryTests
         Assert.AreEqual(ExpenseHistoryStatus.Found, outcome.Status);
         Assert.HasCount(1, outcome.Entries);
         Assert.AreEqual("Aprovar", outcome.Entries[0].Action);
+    }
+
+    /// <summary>Verifica que o Approver lê o histórico apenas de reembolsos em Submitted.</summary>
+    [TestMethod]
+    public async Task GetHistory_ByApprover_ReturnsOnlyHistoryOfSubmittedExpense()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense submitted = CreateExpense("employee-a", ExpenseState.Submitted);
+        Expense draft = CreateExpense("employee-b", ExpenseState.Draft);
+        dbContext.Expenses.AddRange(submitted, draft);
+        dbContext.ExpenseHistories.Add(new ExpenseHistory
+        {
+            ExpenseId = submitted.Id,
+            Action = "Enviar",
+            ActorId = "employee-a",
+            OccurredAtUtc = FixedNowUtc.UtcDateTime,
+            PreviousState = ExpenseState.Draft,
+            NewState = ExpenseState.Submitted,
+        });
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ExpenseHistoryOutcome submittedOutcome = await service.GetHistoryAsync(
+            submitted.Id,
+            [Roles.Approver],
+            actorId: "approver",
+            CancellationToken.None);
+        ExpenseHistoryOutcome draftOutcome = await service.GetHistoryAsync(
+            draft.Id,
+            [Roles.Approver],
+            actorId: "approver",
+            CancellationToken.None);
+
+        Assert.AreEqual(ExpenseHistoryStatus.Found, submittedOutcome.Status);
+        Assert.HasCount(1, submittedOutcome.Entries);
+        Assert.AreEqual(ExpenseHistoryStatus.NotFound, draftOutcome.Status);
+        Assert.IsEmpty(draftOutcome.Entries);
+    }
+
+    /// <summary>Verifica que o Finance lê o histórico apenas de reembolsos em Approved e Paid.</summary>
+    [TestMethod]
+    public async Task GetHistory_ByFinance_ReturnsOnlyHistoryOfApprovedAndPaidExpenses()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense approved = CreateExpense("employee-a", ExpenseState.Approved);
+        Expense paid = CreateExpense("employee-b", ExpenseState.Paid);
+        Expense submitted = CreateExpense("employee-c", ExpenseState.Submitted);
+        dbContext.Expenses.AddRange(approved, paid, submitted);
+        dbContext.ExpenseHistories.Add(new ExpenseHistory
+        {
+            ExpenseId = approved.Id,
+            Action = "Aprovar",
+            ActorId = "approver",
+            OccurredAtUtc = FixedNowUtc.UtcDateTime,
+            PreviousState = ExpenseState.Submitted,
+            NewState = ExpenseState.Approved,
+        });
+        dbContext.ExpenseHistories.Add(new ExpenseHistory
+        {
+            ExpenseId = paid.Id,
+            Action = "Pagar",
+            ActorId = "finance",
+            OccurredAtUtc = FixedNowUtc.UtcDateTime,
+            PreviousState = ExpenseState.Approved,
+            NewState = ExpenseState.Paid,
+        });
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ExpenseHistoryOutcome approvedOutcome = await service.GetHistoryAsync(
+            approved.Id,
+            [Roles.Finance],
+            actorId: "finance",
+            CancellationToken.None);
+        ExpenseHistoryOutcome paidOutcome = await service.GetHistoryAsync(
+            paid.Id,
+            [Roles.Finance],
+            actorId: "finance",
+            CancellationToken.None);
+        ExpenseHistoryOutcome submittedOutcome = await service.GetHistoryAsync(
+            submitted.Id,
+            [Roles.Finance],
+            actorId: "finance",
+            CancellationToken.None);
+
+        Assert.AreEqual(ExpenseHistoryStatus.Found, approvedOutcome.Status);
+        Assert.HasCount(1, approvedOutcome.Entries);
+        Assert.AreEqual(ExpenseHistoryStatus.Found, paidOutcome.Status);
+        Assert.HasCount(1, paidOutcome.Entries);
+        Assert.AreEqual(ExpenseHistoryStatus.NotFound, submittedOutcome.Status);
+        Assert.IsEmpty(submittedOutcome.Entries);
     }
 
     /// <summary>Verifica que ator sem role funcional não consulta histórico (403).</summary>

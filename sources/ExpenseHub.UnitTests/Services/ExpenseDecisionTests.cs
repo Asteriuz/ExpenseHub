@@ -300,10 +300,11 @@ public sealed class ExpenseDecisionTests
         Assert.HasCount(1, await dbContext.ExpenseHistories.ToListAsync());
     }
 
-    /// <summary>Verifica que estados diferentes de Submitted não recebem reprovação (409, sem histórico).</summary>
+    /// <summary>Verifica que estados diferentes de Submitted não recebem reprovação (409, sem histórico), incluindo o estado final Rejected.</summary>
     [TestMethod]
     [DataRow(ExpenseState.Draft)]
     [DataRow(ExpenseState.Approved)]
+    [DataRow(ExpenseState.Rejected)]
     [DataRow(ExpenseState.Paid)]
     public async Task Reject_WhenStateIsNotSubmitted_ReturnsConflictWithoutHistory(ExpenseState state)
     {
@@ -322,6 +323,32 @@ public sealed class ExpenseDecisionTests
         Assert.AreEqual(RejectExpenseStatus.NotSubmitted, outcome.Status);
         Assert.IsNull(outcome.Expense);
         Assert.AreEqual(state, (await dbContext.Expenses.SingleAsync()).State);
+        Assert.IsEmpty(await dbContext.ExpenseHistories.ToListAsync());
+    }
+
+    /// <summary>Verifica que roles acumuladas não eliminam a proibição de decisão sobre o próprio reembolso.</summary>
+    [TestMethod]
+    public async Task Approve_ByOwnerWithAccumulatedEmployeeAndApproverRoles_ReturnsForbidden()
+    {
+        using ExpenseHubDbContext dbContext = CreateContext();
+        Expense expense = CreateExpense("employee-approver", ExpenseState.Submitted);
+        dbContext.Expenses.Add(expense);
+        await dbContext.SaveChangesAsync();
+        ExpenseService service = CreateService(dbContext);
+
+        ApproveExpenseOutcome approveOutcome = await service.ApproveAsync(
+            expense.Id,
+            actorId: "employee-approver",
+            CancellationToken.None);
+        RejectExpenseOutcome rejectOutcome = await service.RejectAsync(
+            expense.Id,
+            ValidRejectRequest(),
+            actorId: "employee-approver",
+            CancellationToken.None);
+
+        Assert.AreEqual(ApproveExpenseStatus.Forbidden, approveOutcome.Status);
+        Assert.AreEqual(RejectExpenseStatus.Forbidden, rejectOutcome.Status);
+        Assert.AreEqual(ExpenseState.Submitted, (await dbContext.Expenses.SingleAsync()).State);
         Assert.IsEmpty(await dbContext.ExpenseHistories.ToListAsync());
     }
 
