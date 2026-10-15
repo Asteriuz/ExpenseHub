@@ -219,6 +219,63 @@ As rotas são protegidas por padrão (política de fallback exige autenticação
 - anônimo em rota protegida → `401` com `ProblemDetails` (`application/problem+json`);
 - autenticado sem a role exigida → `403` com `ProblemDetails` (`application/problem+json`).
 
+## Matriz de autorização (evidência)
+
+A tabela abaixo consolida `docs/MATRIZ-AUTORIZACAO.md` com o **status HTTP que cada
+combinação retorna**. As regras contextuais (ownership, estado e visibilidade) são
+aplicadas na **camada de serviço** (`ExpenseService`), nunca apenas no atributo de
+role da rota; o atributo `[Authorize(Roles = ...)]` fica na rota, conforme a regra de
+autorização em duas camadas.
+
+Cada célula descreve o resultado para um usuário que possui **apenas** aquela role.
+`*` indica que a permissão existe somente se o usuário também possuir `Employee`
+(roles acumulam permissões; a união dos escopos de leitura é aplicada no serviço).
+`†` indica operação cuja rota é entregue nas issues I07/I08; o status listado é o
+contrato já fixado pela matriz.
+
+| Operação | Anônimo | Employee | Approver | Finance | Auditor | Admin |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Registrar usuário (`POST /register`) | 201 / 400 | 201 / 400 | 201 / 400 | 201 / 400 | 201 / 400 | 201 / 400 |
+| Login (`POST /login`) | 200 / 401 | 200 / 401 | 200 / 401 | 200 / 401 | 200 / 401 | 200 / 401 |
+| Listar usuários (`GET /api/admin/users`) | 401 | 403 | 403 | 403 | 403 | 200 |
+| Alterar roles (`PUT /api/admin/users/{id}/roles`) | 401 | 403 | 403 | 403 | 403 | 200 / 400 / 403 / 404 |
+| Criar reembolso (`POST /api/expenses`) | 401 | 201 / 400 | 403* | 403* | 403 | 403* |
+| Editar rascunho (`PUT /api/expenses/{id}`) | 401 | 200 / 400 / 403 / 404 / 409 | 403* | 403* | 403 | 403* |
+| Enviar rascunho (`POST /api/expenses/{id}/submit`) | 401 | 200 / 403 / 404 / 409 | 403* | 403* | 403 | 403* |
+| Listar reembolsos (`GET /api/expenses`) | 401 | 200 (próprios) | 200 (Submitted) | 200 (Approved/Paid) | 200 (todos) | 403 |
+| Consultar detalhe (`GET /api/expenses/{id}`) | 401 | 200 (próprio) / 404 | 200 (Submitted) / 404 | 200 (Approved/Paid) / 404 | 200 (todos) | 403 |
+| Aprovar (`POST /api/expenses/{id}/approve`) † | 401 | 403 | 200 / 403 / 404 / 409 | 403 | 403 | 403 |
+| Reprovar (`POST /api/expenses/{id}/reject`) † | 401 | 403 | 200 / 400 / 403 / 404 / 409 | 403 | 403 | 403 |
+| Pagar (`POST /api/expenses/{id}/pay`) † | 401 | 403 | 403 | 200 / 403 / 404 / 409 | 403 | 403 |
+| Consultar histórico (`GET /api/expenses/{id}/history`) † | 401 | 200 (próprio) / 404 | 200 (Submitted) / 404 | 200 (Approved/Paid) / 404 | 200 (todos) | 403 |
+
+Legenda dos status compostos:
+
+- `400`: entrada inválida (DTO com DataAnnotations, whitelist de roles, justificativa da reprovação);
+- `401`: requisição anônima em rota protegida;
+- `403`: autenticado sem a role da rota, sem a regra contextual (não proprietário) ou sem role funcional;
+- `404`: reembolso inexistente **ou fora do escopo de leitura do ator** (a existência de recurso alheio nunca é revelada);
+- `409`: transição incompatível ou repetida (editar/enviar fora de `Draft`, decidir fora de `Submitted`, pagar fora de `Approved`).
+
+### Escopos de leitura e união de roles
+
+`GET /api/expenses` e `GET /api/expenses/{id}` aplicam a visibilidade como filtro **no
+IQueryable, antes de materializar** os dados:
+
+| Role | Escopo de leitura |
+|---|---|
+| `Employee` | Somente os próprios reembolsos, em qualquer estado |
+| `Approver` | Reembolsos em `Submitted` (de qualquer proprietário) |
+| `Finance` | Reembolsos em `Approved` e `Paid` |
+| `Auditor` | Todos os reembolsos, somente leitura |
+| `Admin` | Nenhum: a role `Admin` não concede acesso funcional (`403`) |
+
+Usuário com múltiplas roles recebe a **união** dos escopos (exemplo: `Employee` +
+`Approver` vê os próprios rascunhos **e** os envios de terceiros). As proibições de
+**autoaprovação** e **autopagamento** permanecem sempre: mesmo acumulando `Approver`
+ou `Finance`, ninguém decide ou paga o próprio reembolso (`403` quando as rotas de
+decisão e pagamento existirem, issues I07/I08).
+
 ## Testes
 
 Somente testes unitários escritos por você entram na nota. Testes de integração, end-to-end ou de interface são permitidos, mas opcionais e sem pontuação.

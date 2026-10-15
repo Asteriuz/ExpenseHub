@@ -1,18 +1,22 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using ExpenseHub.Api.Data;
 using ExpenseHub.Api.Domain;
 using ExpenseHub.Api.Dtos;
+using ExpenseHub.Api.Identity;
 using Microsoft.EntityFrameworkCore;
 
 namespace ExpenseHub.Api.Services;
 
 /// <summary>
-/// Cria e edita rascunhos de reembolso, aplicando as regras de campo, ownership e estado
-/// na camada de serviço e registrando o histórico na mesma operação lógica de persistência.
+/// Cria, edita e envia rascunhos de reembolso e consulta reembolsos, aplicando as regras
+/// de campo, ownership, estado e visibilidade da matriz de autorização na camada de
+/// serviço, com histórico registrado na mesma operação lógica de persistência.
 /// </summary>
 public sealed class ExpenseService : IExpenseService
 {
@@ -27,6 +31,8 @@ public sealed class ExpenseService : IExpenseService
     private const string CreateAction = "Criar";
 
     private const string EditAction = "Editar";
+
+    private const string SubmitAction = "Enviar";
 
     private const string NoCategoryLabel = "(sem categoria)";
 
@@ -118,6 +124,116 @@ public sealed class ExpenseService : IExpenseService
         }
 
         return UpdateExpenseOutcome.Updated(ToResponse(expense));
+    }
+
+    /// <inheritdoc />
+    public async Task<SubmitExpenseOutcome> SubmitAsync(Guid id, string ownerId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
+
+        Expense? expense = await _dbContext.Expenses
+            .FirstOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+        if (expense is null)
+        {
+            return SubmitExpenseOutcome.NotFound();
+        }
+
+        if (!string.Equals(expense.OwnerId, ownerId, StringComparison.Ordinal))
+        {
+            return SubmitExpenseOutcome.Forbidden();
+        }
+
+        if (expense.State != ExpenseState.Draft)
+        {
+            return SubmitExpenseOutcome.NotDraft();
+        }
+
+        DateTime nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        expense.State = ExpenseState.Submitted;
+        AddHistory(expense, SubmitAction, ownerId, nowUtc, previousState: ExpenseState.Draft, newState: ExpenseState.Submitted, draftChangesSummary: null);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return SubmitExpenseOutcome.Submitted(ToResponse(expense));
+    }
+
+    /// <inheritdoc />
+    public async Task<ListExpensesOutcome> ListAsync(IReadOnlyList<string> roles, string actorId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+
+        if (!HasAnyFunctionalRole(roles))
+        {
+            return ListExpensesOutcome.Forbidden();
+        }
+
+        List<Expense> visible = await _dbContext.Expenses
+            .Where(BuildVisibilityExpression(roles, actorId))
+            .OrderBy(expense => expense.CreatedAtUtc)
+            .ThenBy(expense => expense.Id)
+            .ToListAsync(cancellationToken);
+
+        return ListExpensesOutcome.Listed(visible.Select(ToResponse).ToList());
+    }
+
+    /// <inheritdoc />
+    public async Task<ExpenseDetailOutcome> GetByIdAsync(Guid id, IReadOnlyList<string> roles, string actorId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
+
+        if (!HasAnyFunctionalRole(roles))
+        {
+            return ExpenseDetailOutcome.Forbidden();
+        }
+
+        Expense? expense = await _dbContext.Expenses
+            .Where(BuildVisibilityExpression(roles, actorId))
+            .FirstOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+        if (expense is null)
+        {
+            return ExpenseDetailOutcome.NotFound();
+        }
+
+        return ExpenseDetailOutcome.Found(ToResponse(expense));
+    }
+
+    private static bool HasAnyFunctionalRole(IReadOnlyList<string>? roles)
+    {
+        return ContainsRole(roles, Roles.Employee)
+            || ContainsRole(roles, Roles.Approver)
+            || ContainsRole(roles, Roles.Finance)
+            || ContainsRole(roles, Roles.Auditor);
+    }
+
+    private static bool ContainsRole(IReadOnlyList<string>? roles, string role)
+    {
+        if (roles is null)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < roles.Count; index++)
+        {
+            if (string.Equals(roles[index], role, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static Expression<Func<Expense, bool>> BuildVisibilityExpression(IReadOnlyList<string>? roles, string actorId)
+    {
+        bool isEmployee = ContainsRole(roles, Roles.Employee);
+        bool isApprover = ContainsRole(roles, Roles.Approver);
+        bool isFinance = ContainsRole(roles, Roles.Finance);
+        bool isAuditor = ContainsRole(roles, Roles.Auditor);
+
+        return expense =>
+            (isEmployee && expense.OwnerId == actorId)
+            || (isApprover && expense.State == ExpenseState.Submitted)
+            || (isFinance && (expense.State == ExpenseState.Approved || expense.State == ExpenseState.Paid))
+            || isAuditor;
     }
 
     private List<string> ValidateInput(string description, decimal amount, DateOnly expenseDate)

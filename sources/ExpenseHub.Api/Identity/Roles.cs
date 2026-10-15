@@ -22,4 +22,7 @@ public static class Roles
 
     /// <summary>Todas as roles que devem existir na aplicação.</summary>
     public static IReadOnlyList<string> All { get; } = new[] { Admin, Employee, Approver, Finance, Auditor };
+
+    /// <summary>Roles com acesso de leitura às listagens e detalhes de reembolsos; Admin fica fora por não ter acesso funcional.</summary>
+    public const string Query = $"{Employee},{Approver},{Finance},{Auditor}";
 }
