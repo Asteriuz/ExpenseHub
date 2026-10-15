@@ -43,7 +43,7 @@ Entrega final do Checkpoint 2 — ExpenseHub.
 
 - **URL do repositório:** https://github.com/Asteriuz/ExpenseHub
 - **Integrantes:** Augusto Barcelos Barros (RM 565065), Juan Francisco Alves Muradas (RM 555541).
-- **SHA do commit final:** `<preencher com o SHA do commit final após o merge>`
+- **SHA do commit final:** `b0f321021177e9a53e4b2893218d0bb1e1dbd971`
 - **Integração contínua:** workflow `code-quality` verde em `main` — score
   **100/100** (run 38678190282, commit 5a97f3e; artefato `code-quality-report`,
   categorias build/security/hygiene/style/best-practices 20/20, nenhum bloqueante).
